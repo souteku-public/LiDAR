@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QMetaObject, Qt
 
 from .udp_receiver import UDPReceiver
 from .packet_parser import PointCloudFrame
@@ -117,8 +117,9 @@ class Recorder(QObject):
         )
         self._timer_thread.start()
 
+    @pyqtSlot()
     def stop(self) -> None:
-        """録画を停止する"""
+        """録画を停止する (メインスレッドから呼ぶこと)"""
         if self._state == RecorderState.IDLE:
             return
         self._set_state(RecorderState.STOPPING)
@@ -163,9 +164,11 @@ class Recorder(QObject):
                 self.sig_file_saved.emit(path)
 
     def _on_receiver_error(self, msg: str) -> None:
-        """受信スレッドからのエラー通知"""
+        """受信スレッドからのエラー通知 (受信スレッドから呼ばれる)"""
         self.sig_error.emit(msg)
-        self.stop()
+        # 受信スレッドから直接 stop() を呼ぶと self._thread.join() がデッドロックするため
+        # Qt のイベントキューに乗せてメインスレッドで実行させる
+        QMetaObject.invokeMethod(self, "stop", Qt.QueuedConnection)
 
     def _timer_run(self) -> None:
         """経過時間を監視し、時間切れで録画を停止するスレッド"""
@@ -174,5 +177,6 @@ class Recorder(QObject):
             self.sig_elapsed.emit(elapsed)
             if elapsed >= self._duration_s:
                 logger.info("録画時間 %d 秒に達したため停止します", self._duration_s)
-                self.stop()
+                # タイマースレッドからも QueuedConnection でメインスレッドに委譲
+                QMetaObject.invokeMethod(self, "stop", Qt.QueuedConnection)
                 return

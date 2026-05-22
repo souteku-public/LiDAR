@@ -71,7 +71,8 @@ class UDPReceiver:
                 self._sock.close()
             except OSError:
                 pass
-        if self._thread:
+        # 受信スレッド自身から呼ばれた場合は join しない (cannot join current thread 防止)
+        if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=3.0)
         logger.info("UDPReceiver stopped")
 

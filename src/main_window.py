@@ -108,15 +108,24 @@ class MainWindow(QMainWindow):
         layout = QGridLayout(grp)
         layout.setColumnStretch(1, 1)
 
-        layout.addWidget(QLabel("受信 IP アドレス:"), 0, 0)
+        host_label = QLabel("受信 IP アドレス\n(この PC の NIC):")
+        host_label.setToolTip("LiDAR ではなく、このPCのNICに割り当てられたIPアドレスを指定します")
+        layout.addWidget(host_label, 0, 0)
         self._le_host = QLineEdit(DEFAULT_HOST)
-        self._le_host.setPlaceholderText("例: 0.0.0.0 (全インターフェース)")
+        self._le_host.setPlaceholderText("0.0.0.0 (全インターフェース受信、推奨)")
         self._le_host.setToolTip(
-            "LiDAR からのパケットを受け付ける IP。\n"
-            "0.0.0.0 にすると全 NIC で受信します。\n"
-            "特定 NIC のみ使う場合はその IP を指定してください。"
+            "【このPCのNICのIPアドレス】を入力してください。LiDARのIPではありません。\n\n"
+            "  0.0.0.0  → 全NICで受信（迷ったらこれ）\n"
+            "  192.168.x.x → 特定NICのみ使う場合はそのPCのIP\n\n"
+            "※ LiDARのIPアドレスを入れると WinError 10049 が発生します。"
         )
         layout.addWidget(self._le_host, 0, 1)
+
+        # ヒント表示ラベル
+        hint_lbl = QLabel("⚠ LiDARのIPではなく\nこのPCのIPを指定")
+        hint_lbl.setStyleSheet("color: #E65100; font-size: 10px;")
+        hint_lbl.setToolTip("受信IPはこのPCのNICに付与されたIPです。迷う場合は 0.0.0.0 を使用してください。")
+        layout.addWidget(hint_lbl, 0, 2)
 
         layout.addWidget(QLabel("UDP ポート:"), 1, 0)
         self._sb_port = QSpinBox()
