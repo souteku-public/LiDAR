@@ -12,6 +12,11 @@ Falcon K2 LiDAR Recorder - PCD ビューアー
     # ディレクトリを指定 → ファイル一覧から選んで表示
     python viewer.py path/to/session_dir/
 
+    # 連番アニメーション再生 (open3d 必須)
+    python viewer.py --animate path/to/session_dir/
+    python viewer.py --animate path/to/session_dir/ --fps 20
+    python viewer.py --animate path/to/session_dir/ --accumulate
+
     # 引数なしで起動 → デフォルト出力先から選択
     python viewer.py
 
@@ -25,6 +30,7 @@ import sys
 import os
 import struct
 import glob
+import time
 import argparse
 import numpy as np
 from pathlib import Path
@@ -201,6 +207,176 @@ def view(filepath: str) -> None:
     print("    pip install open3d  または  pip install matplotlib  を実行してください。")
 
 
+# ── 連番アニメーション再生 ────────────────────────────────────────────────────
+
+def animate_sequence(
+    directory: str,
+    fps: float = 10.0,
+    accumulate: bool = False,
+) -> None:
+    """
+    PCD ファイル群を連番アニメーションとして再生する (open3d 必須)。
+
+    Parameters
+    ----------
+    directory  : str   PCD ファイルのあるディレクトリ (再帰検索)
+    fps        : float 再生フレームレート [Hz]
+    accumulate : bool  True にすると点群を累積表示する
+                       (差分PCDの全体像を見たいとき)。
+                       False は各PCDを単独表示。
+
+    キー操作:
+        SPACE  : 再生 / 一時停止
+        →      : 次のフレーム (一時停止)
+        ←      : 前のフレーム (一時停止)
+        =      : 再生速度 1.5 倍
+        -      : 再生速度 1/1.5
+        R      : 視点リセット
+        C      : 累積表示クリア (accumulate モード時)
+        Q / Esc: 終了
+    """
+    files = sorted(glob.glob(os.path.join(directory, "**", "*.pcd"), recursive=True))
+    if not files:
+        print(f"  ⚠ {directory} に .pcd ファイルが見つかりません")
+        return
+
+    try:
+        import open3d as o3d
+    except ImportError:
+        print("  ⚠ open3d が必要です。`pip install open3d` を実行してください。")
+        return
+
+    mode = "累積表示" if accumulate else "単独表示"
+    print(f"\n  {len(files)} ファイルを {fps:.1f} FPS で再生 ({mode})")
+    print("  ─" * 30)
+    print("  操作: SPACE=再生/一時停止  ←/→=前後  +/-=速度  R=視点  C=累積クリア  Q=終了")
+    print("  ─" * 30)
+
+    vis = o3d.visualization.VisualizerWithKeyCallback()
+    vis.create_window(
+        window_name=f"PCD Sequence ({len(files)} files)",
+        width=1024, height=768,
+    )
+
+    state = {
+        "idx": 0, "playing": True, "fps": fps,
+        "last_update": time.time(),
+        "accumulated_points": [],   # for accumulate mode
+    }
+
+    pcd_geom = o3d.geometry.PointCloud()
+
+    def _colorize(pts: np.ndarray) -> np.ndarray:
+        z = pts[:, 2]
+        z_min, z_max = z.min(), z.max()
+        if z_max > z_min:
+            norm = (z - z_min) / (z_max - z_min)
+        else:
+            norm = np.ones(len(pts)) * 0.5
+        # viridis 風配色 (青→緑→黄)
+        r = np.clip(1.5 - 4 * np.abs(norm - 0.75), 0, 1)
+        g = np.clip(1.5 - 4 * np.abs(norm - 0.5),  0, 1)
+        b = np.clip(1.5 - 4 * np.abs(norm - 0.25), 0, 1)
+        return np.stack([r, g, b], axis=1)
+
+    def _load(i: int) -> None:
+        try:
+            pts = filter_valid(read_pcd(files[i]))
+        except Exception as e:  # noqa: BLE001
+            print(f"\n  読み込み失敗: {files[i]} ({e})")
+            return
+        if accumulate:
+            if len(pts) > 0:
+                state["accumulated_points"].append(pts)
+            if state["accumulated_points"]:
+                pts = np.concatenate(state["accumulated_points"], axis=0)
+        if len(pts) == 0:
+            return
+        pcd_geom.points = o3d.utility.Vector3dVector(pts[:, :3].astype(np.float64))
+        pcd_geom.colors = o3d.utility.Vector3dVector(_colorize(pts).astype(np.float64))
+        fname = os.path.basename(files[i])
+        print(f"\r  [{i+1:5d}/{len(files):5d}] {fname:50s} ({len(pts):>8,} pts)",
+              end="", flush=True)
+
+    # ── キーコールバック ──
+    def toggle_play(_vis):
+        state["playing"] = not state["playing"]
+        return False
+
+    def next_frame(_vis):
+        state["playing"] = False
+        if state["idx"] < len(files) - 1:
+            state["idx"] += 1
+            _load(state["idx"])
+            _vis.update_geometry(pcd_geom)
+        return False
+
+    def prev_frame(_vis):
+        state["playing"] = False
+        if state["idx"] > 0:
+            if accumulate and state["accumulated_points"]:
+                state["accumulated_points"].pop()
+            state["idx"] -= 1
+            _load(state["idx"])
+            _vis.update_geometry(pcd_geom)
+        return False
+
+    def speed_up(_vis):
+        state["fps"] = min(120.0, state["fps"] * 1.5)
+        print(f"\n  速度: {state['fps']:.1f} FPS")
+        return False
+
+    def speed_down(_vis):
+        state["fps"] = max(0.5, state["fps"] / 1.5)
+        print(f"\n  速度: {state['fps']:.1f} FPS")
+        return False
+
+    def reset_view(_vis):
+        _vis.reset_view_point(True)
+        return False
+
+    def clear_accum(_vis):
+        if accumulate:
+            state["accumulated_points"].clear()
+            print("\n  累積クリア")
+        return False
+
+    vis.register_key_callback(ord(" "), toggle_play)
+    vis.register_key_callback(262, next_frame)   # GLFW_KEY_RIGHT
+    vis.register_key_callback(263, prev_frame)   # GLFW_KEY_LEFT
+    vis.register_key_callback(ord("="), speed_up)
+    vis.register_key_callback(ord("-"), speed_down)
+    vis.register_key_callback(ord("R"), reset_view)
+    vis.register_key_callback(ord("C"), clear_accum)
+
+    # ── 初期フレームを読み込み ──
+    _load(0)
+    vis.add_geometry(pcd_geom)
+    vis.reset_view_point(True)
+
+    # ── メインループ ──
+    try:
+        while True:
+            if state["playing"]:
+                now = time.time()
+                if now - state["last_update"] >= 1.0 / state["fps"]:
+                    if state["idx"] < len(files) - 1:
+                        state["idx"] += 1
+                        _load(state["idx"])
+                        vis.update_geometry(pcd_geom)
+                    else:
+                        state["playing"] = False
+                        print("\n  最終フレームに到達しました")
+                    state["last_update"] = now
+
+            if not vis.poll_events():
+                break
+            vis.update_renderer()
+    finally:
+        vis.destroy_window()
+        print()
+
+
 # ── ファイル選択 ──────────────────────────────────────────────────────────────
 
 def pick_file(directory: str) -> str | None:
@@ -245,9 +421,32 @@ def main() -> None:
         default=os.path.join(os.path.expanduser("~"), "lidar_output"),
         help=".pcd ファイルまたはセッションディレクトリのパス",
     )
+    parser.add_argument(
+        "--animate", "-a",
+        action="store_true",
+        help="連番アニメーション再生モード (ディレクトリ指定必須、open3d必須)",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=10.0,
+        help="アニメーション再生フレームレート [Hz] (default: 10)",
+    )
+    parser.add_argument(
+        "--accumulate",
+        action="store_true",
+        help="点群を累積表示する (差分PCDの全体像を見たいとき)",
+    )
     args = parser.parse_args()
 
     target = args.path
+
+    if args.animate:
+        if not os.path.isdir(target):
+            print(f"  ⚠ --animate にはディレクトリを指定してください: {target}")
+            sys.exit(1)
+        animate_sequence(target, fps=args.fps, accumulate=args.accumulate)
+        return
 
     if os.path.isfile(target):
         # ファイル直接指定
