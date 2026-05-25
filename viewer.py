@@ -54,18 +54,38 @@ def read_pcd(filepath: str) -> np.ndarray:
     return points
 
 
+def filter_valid(points: np.ndarray) -> np.ndarray:
+    """
+    NaN / Inf を含む点を除去して有効点のみを返す。
+
+    Falcon K2 は「戻り信号なし」の点を float32 NaN で送信する。
+    表示や変化検出の前にこのフィルターを通す。
+    """
+    xyz = points[:, :3]
+    valid = np.isfinite(xyz).all(axis=1)   # x,y,z がすべて有限値の行
+    return points[valid]
+
+
 def pcd_info(filepath: str, points: np.ndarray) -> None:
     """ファイル情報をコンソールに出力する"""
     size_kb = os.path.getsize(filepath) / 1024
+    valid = filter_valid(points)
+    nan_count = len(points) - len(valid)
+
     print(f"\n{'─'*50}")
-    print(f"  ファイル : {os.path.basename(filepath)}")
-    print(f"  サイズ  : {size_kb:.1f} KB")
-    print(f"  点数    : {len(points):,} 点")
-    if len(points) > 0:
-        xyz = points[:, :3]
-        print(f"  X 範囲  : {xyz[:,0].min():.3f} 〜 {xyz[:,0].max():.3f} m")
-        print(f"  Y 範囲  : {xyz[:,1].min():.3f} 〜 {xyz[:,1].max():.3f} m")
-        print(f"  Z 範囲  : {xyz[:,2].min():.3f} 〜 {xyz[:,2].max():.3f} m")
+    print(f"  ファイル  : {os.path.basename(filepath)}")
+    print(f"  サイズ   : {size_kb:.1f} KB")
+    print(f"  総点数   : {len(points):,} 点")
+    print(f"  有効点数  : {len(valid):,} 点")
+    if nan_count > 0:
+        print(f"  NaN/Inf  : {nan_count:,} 点 (戻り信号なし、表示から除外)")
+    if len(valid) > 0:
+        xyz = valid[:, :3]
+        print(f"  X 範囲   : {xyz[:,0].min():.3f} 〜 {xyz[:,0].max():.3f} m")
+        print(f"  Y 範囲   : {xyz[:,1].min():.3f} 〜 {xyz[:,1].max():.3f} m")
+        print(f"  Z 範囲   : {xyz[:,2].min():.3f} 〜 {xyz[:,2].max():.3f} m")
+    else:
+        print("  ⚠ 有効な点がありません")
     print(f"{'─'*50}")
 
 
@@ -75,17 +95,19 @@ def view_with_open3d(points: np.ndarray, title: str = "PCD Viewer") -> None:
     """open3d を使った 3D 表示"""
     import open3d as o3d
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points[:, :3].astype(np.float64))
+    pts = filter_valid(points)   # NaN / Inf を除去
 
-    # intensity を色にマップ (グレースケール)
-    if points.shape[1] >= 4:
-        intensity = points[:, 3]
-        i_min, i_max = intensity.min(), intensity.max()
-        if i_max > i_min:
-            norm = (intensity - i_min) / (i_max - i_min)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts[:, :3].astype(np.float64))
+
+    # Z 高さを色にマップ (グレースケール)
+    if len(pts) > 0:
+        z = pts[:, 2]
+        z_min, z_max = z.min(), z.max()
+        if z_max > z_min:
+            norm = (z - z_min) / (z_max - z_min)
         else:
-            norm = np.ones(len(intensity)) * 0.5
+            norm = np.ones(len(pts)) * 0.5
         colors = np.stack([norm, norm, norm], axis=1)
         pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
 
@@ -108,10 +130,15 @@ def view_with_matplotlib(points: np.ndarray, title: str = "PCD Viewer") -> None:
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+    pts = filter_valid(points)   # NaN / Inf を除去
+    if len(pts) == 0:
+        print("  ⚠ 有効な点がないため表示できません")
+        return
+
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
 
-    xyz = points[:, :3]
+    xyz = pts[:, :3]
 
     # 点数が多い場合はダウンサンプリング
     MAX_DISPLAY = 50_000
@@ -141,6 +168,12 @@ def view(filepath: str) -> None:
 
     if len(points) == 0:
         print("  ⚠ 点群データが空です。")
+        return
+
+    valid = filter_valid(points)
+    if len(valid) == 0:
+        print("  ⚠ 有効な点が 0 点です (全点が NaN/Inf)。")
+        print("    → パケットフォーマットが正しくパースできていない可能性があります。")
         return
 
     title = os.path.basename(filepath)

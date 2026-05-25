@@ -16,6 +16,16 @@ import numpy as np
 from typing import Optional, Tuple
 
 
+def _remove_nan(points: np.ndarray) -> np.ndarray:
+    """NaN / Inf を含む点を除去する。
+    Falcon K2 は「戻り信号なし」の点を float32 NaN で送信するため
+    変化検出の前にフィルタリングが必要。"""
+    if points.shape[0] == 0:
+        return points
+    valid = np.isfinite(points[:, :3]).all(axis=1)
+    return points[valid]
+
+
 def _points_to_voxel_keys(
     points: np.ndarray,
     voxel_size: float,
@@ -68,6 +78,9 @@ class ChangeDetector:
         is_first : bool
             初回フレームなら True。
         """
+        # NaN/Inf を除去 (Falcon K2 は戻り信号なし点を NaN で送信する)
+        current_points = _remove_nan(current_points)
+
         cur_keys = _points_to_voxel_keys(current_points, self.voxel_size)
 
         if self._prev_points is None:
