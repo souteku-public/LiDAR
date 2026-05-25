@@ -17,13 +17,16 @@ from typing import Optional, Tuple
 
 
 def _remove_nan(points: np.ndarray) -> np.ndarray:
-    """NaN / Inf を含む点を除去する。
-    Falcon K2 は「戻り信号なし」の点を float32 NaN で送信するため
-    変化検出の前にフィルタリングが必要。"""
+    """NaN / Inf / 異常巨大値を含む点を除去する。
+    Falcon K2 は「戻り信号なし」を NaN で送信する。
+    また、フォーマット不一致時に float32 巨大値 (>1e6 m) が混入することがあるので
+    それも除去する (voxel化での overflow 防止)。"""
     if points.shape[0] == 0:
         return points
-    valid = np.isfinite(points[:, :3]).all(axis=1)
-    return points[valid]
+    xyz = points[:, :3]
+    finite = np.isfinite(xyz).all(axis=1)
+    in_range = (np.abs(xyz) < 1e6).all(axis=1)
+    return points[finite & in_range]
 
 
 def _points_to_voxel_keys(
