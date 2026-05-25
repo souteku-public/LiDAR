@@ -207,6 +207,115 @@ def view(filepath: str) -> None:
     print("    pip install open3d  または  pip install matplotlib  を実行してください。")
 
 
+# ── ディレクトリ一括検査 ──────────────────────────────────────────────────────
+
+def inspect_directory(directory: str, sample_count: int = 5) -> None:
+    """
+    ディレクトリ内の全 PCD ファイルを検査して統計をまとめて表示する。
+    白画面・データ異常の切り分け診断用。
+    """
+    files = sorted(glob.glob(os.path.join(directory, "**", "*.pcd"), recursive=True))
+    if not files:
+        print(f"  ⚠ {directory} に .pcd ファイルが見つかりません")
+        return
+
+    print(f"\n  対象ディレクトリ : {directory}")
+    print(f"  ファイル数      : {len(files)}")
+    print("  ─" * 35)
+
+    total_pts = 0
+    total_valid = 0
+    total_size = 0
+    all_x: list = []
+    all_y: list = []
+    all_z: list = []
+    sample_indices = sorted(set(
+        list(range(min(sample_count, len(files)))) +     # 先頭 N
+        list(range(max(0, len(files) - sample_count), len(files)))  # 末尾 N
+    ))
+
+    for i, fp in enumerate(files):
+        size_kb = os.path.getsize(fp) / 1024
+        total_size += size_kb
+        try:
+            pts = read_pcd(fp)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{i+1:4d}] ⚠ 読み込みエラー: {os.path.basename(fp)} ({e})")
+            continue
+
+        valid = filter_valid(pts)
+        n_pts, n_valid = len(pts), len(valid)
+        total_pts += n_pts
+        total_valid += n_valid
+
+        if n_valid > 0:
+            all_x.extend([valid[:, 0].min(), valid[:, 0].max()])
+            all_y.extend([valid[:, 1].min(), valid[:, 1].max()])
+            all_z.extend([valid[:, 2].min(), valid[:, 2].max()])
+
+        # 詳細表示は先頭/末尾の数ファイルだけ
+        if i in sample_indices:
+            fname = os.path.basename(fp)[:48]
+            if n_valid > 0:
+                x_rng = f"X[{valid[:,0].min():+7.2f},{valid[:,0].max():+7.2f}]"
+                y_rng = f"Y[{valid[:,1].min():+7.2f},{valid[:,1].max():+7.2f}]"
+                z_rng = f"Z[{valid[:,2].min():+7.2f},{valid[:,2].max():+7.2f}]"
+                print(f"  [{i+1:4d}] {size_kb:7.1f}KB  {n_pts:>7,}pts ({n_valid:>6,}有効) "
+                      f"{x_rng} {y_rng} {z_rng}")
+            else:
+                print(f"  [{i+1:4d}] {size_kb:7.1f}KB  {n_pts:>7,}pts (有効 0)  ⚠ 全点NaN")
+        elif i == sample_count and len(files) > 2 * sample_count:
+            print(f"        ... ({len(files) - 2 * sample_count} ファイル省略) ...")
+
+    print("  ─" * 35)
+    print(f"  総容量        : {total_size:.1f} KB ({total_size/1024:.1f} MB)")
+    print(f"  総点数        : {total_pts:,}")
+    print(f"  有効点数      : {total_valid:,} "
+          f"({total_valid/total_pts*100:.1f}%)" if total_pts > 0 else "")
+    if all_x:
+        print(f"  全体 X 範囲   : {min(all_x):+8.3f} 〜 {max(all_x):+8.3f} m")
+        print(f"  全体 Y 範囲   : {min(all_y):+8.3f} 〜 {max(all_y):+8.3f} m")
+        print(f"  全体 Z 範囲   : {min(all_z):+8.3f} 〜 {max(all_z):+8.3f} m")
+    print("  ─" * 35)
+
+    # 健全性チェック
+    print("\n  ◆ 診断結果:")
+    if total_valid == 0:
+        print("    ✗ 有効点が 1 つもありません。")
+        print("      → パケットパーサーの XYZ フォーマットが不一致の可能性が高いです。")
+    elif total_valid / total_pts < 0.05:
+        print(f"    ⚠ 有効点比率が低い ({total_valid/total_pts*100:.1f}%)")
+        print("      → 多くの点が NaN です。LiDAR の視野外/反射弱が多いか、")
+        print("        フォーマット不一致の可能性があります。")
+    elif all_x and (max(abs(min(all_x)), abs(max(all_x))) > 1000 or
+                    max(abs(min(all_y)), abs(max(all_y))) > 1000):
+        print("    ⚠ 座標値が異常に大きいです (>1000m)")
+        print("      → XYZ がメートル単位ではなくミリ単位の可能性、または")
+        print("        浮動小数の解釈ズレの可能性があります。")
+    elif all_x and (max(all_x) - min(all_x)) < 0.1:
+        print("    ⚠ 座標範囲が極端に狭いです (<0.1m)")
+        print("      → ほぼ同じ位置の点ばかりです。")
+    else:
+        print("    ✓ データは概ね妥当に見えます。")
+        print(f"      測定範囲 X:{max(all_x)-min(all_x):.1f}m  "
+              f"Y:{max(all_y)-min(all_y):.1f}m  "
+              f"Z:{max(all_z)-min(all_z):.1f}m")
+
+    if len(files) > 1:
+        first_size = os.path.getsize(files[0]) / 1024
+        avg_other = sum(os.path.getsize(f) for f in files[1:]) / len(files[1:]) / 1024
+        ratio = first_size / avg_other if avg_other > 0 else float("inf")
+        print(f"\n  ◆ フレーム境界検出:")
+        print(f"    1枚目         : {first_size:8.1f} KB")
+        print(f"    2枚目以降平均  : {avg_other:8.1f} KB")
+        if ratio > 5:
+            print(f"    → 1枚目 / 平均 = {ratio:.1f}倍  (正常な差分動作)")
+        else:
+            print(f"    → 1枚目 / 平均 = {ratio:.1f}倍")
+            print(f"      差分動作になっていない可能性があります。")
+            print(f"      (1枚目だけ大きく、後は小さくなるのが期待値)")
+
+
 # ── 連番アニメーション再生 ────────────────────────────────────────────────────
 
 def animate_sequence(
@@ -349,10 +458,22 @@ def animate_sequence(
     vis.register_key_callback(ord("R"), reset_view)
     vis.register_key_callback(ord("C"), clear_accum)
 
-    # ── 初期フレームを読み込み ──
-    _load(0)
+    # ── 初期表示: 最も大きい点群ファイル(=情報量が多い)を最初に使い視点を合わせる ──
+    sizes = [os.path.getsize(f) for f in files]
+    initial_idx = max(range(len(files)), key=lambda i: sizes[i])
+    print(f"\n  視点設定用に最大ファイル #{initial_idx+1} ({sizes[initial_idx]/1024:.1f} KB) で表示開始")
+    state["idx"] = initial_idx
+    _load(initial_idx)
+    if len(pcd_geom.points) == 0:
+        print("\n  ⚠ 表示できる有効点がありません。--inspect で内容を確認してください。")
+        vis.destroy_window()
+        return
     vis.add_geometry(pcd_geom)
     vis.reset_view_point(True)
+    # 表示後、先頭フレームに戻す (再生は先頭から)
+    state["idx"] = 0
+    _load(0)
+    vis.update_geometry(pcd_geom)
 
     # ── メインループ ──
     try:
@@ -437,11 +558,23 @@ def main() -> None:
         action="store_true",
         help="点群を累積表示する (差分PCDの全体像を見たいとき)",
     )
+    parser.add_argument(
+        "--inspect", "-i",
+        action="store_true",
+        help="ディレクトリ内全PCDファイルの統計を表示する (データ診断用)",
+    )
     args = parser.parse_args()
 
     # PowerShell が末尾の "\" を次のクォートをエスケープする扱いにする落とし穴対策:
     # "C:\path\dir\" と書くとパス末尾に " が混入するため除去する
     target = args.path.strip().rstrip('"').rstrip("'")
+
+    if args.inspect:
+        if not os.path.isdir(target):
+            print(f"  ⚠ --inspect にはディレクトリを指定してください: {target}")
+            sys.exit(1)
+        inspect_directory(target)
+        return
 
     if args.animate:
         if not os.path.isdir(target):
