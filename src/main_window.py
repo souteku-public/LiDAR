@@ -246,19 +246,39 @@ class MainWindow(QMainWindow):
         layout = QGridLayout(grp)
 
         # 数値ラベル群
-        self._lbl_frames  = self._stat_value("0")
-        self._lbl_saved   = self._stat_value("0")
-        self._lbl_elapsed = self._stat_value("00:00:00")
-        self._lbl_remain  = self._stat_value("--:--:--")
+        self._lbl_udp_pkts = self._stat_value("0")
+        self._lbl_frames   = self._stat_value("0")
+        self._lbl_saved    = self._stat_value("0")
+        self._lbl_elapsed  = self._stat_value("00:00:00")
+        self._lbl_remain   = self._stat_value("--:--:--")
 
-        layout.addWidget(QLabel("受信フレーム数:"),   0, 0)
-        layout.addWidget(self._lbl_frames,            0, 1)
-        layout.addWidget(QLabel("保存ファイル数:"),   0, 2)
-        layout.addWidget(self._lbl_saved,             0, 3)
-        layout.addWidget(QLabel("経過時間:"),         1, 0)
-        layout.addWidget(self._lbl_elapsed,           1, 1)
-        layout.addWidget(QLabel("残り時間:"),         1, 2)
-        layout.addWidget(self._lbl_remain,            1, 3)
+        # 行 0: UDP パケット数 / パースされたフレーム数
+        udp_label = QLabel("UDP パケット数:")
+        udp_label.setToolTip(
+            "受信した生 UDP パケットの総数。\n"
+            "この値が増えていれば LiDAR からデータは届いています。\n"
+            "「受信フレーム数」が 0 のままなら、パケット形式が\n"
+            "本アプリの想定と異なります（ログで先頭バイトを確認してください）。"
+        )
+        layout.addWidget(udp_label,               0, 0)
+        layout.addWidget(self._lbl_udp_pkts,      0, 1)
+        layout.addWidget(QLabel("受信フレーム数:"), 0, 2)
+        layout.addWidget(self._lbl_frames,         0, 3)
+
+        # 行 1: 保存ファイル数 / 経過時間 / 残り時間
+        layout.addWidget(QLabel("保存ファイル数:"), 1, 0)
+        layout.addWidget(self._lbl_saved,          1, 1)
+        layout.addWidget(QLabel("経過時間:"),       1, 2)
+        layout.addWidget(self._lbl_elapsed,        1, 3)
+
+        layout.addWidget(QLabel("残り時間:"),       2, 0)
+        layout.addWidget(self._lbl_remain,         2, 1)
+
+        # 診断ラベル (通常は非表示)
+        self._lbl_diag = QLabel("")
+        self._lbl_diag.setStyleSheet("color: #E65100; font-weight: bold;")
+        self._lbl_diag.setWordWrap(True)
+        layout.addWidget(self._lbl_diag, 3, 0, 1, 4)
 
         # プログレスバー
         self._progress = QProgressBar()
@@ -266,7 +286,7 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self._progress.setTextVisible(True)
         self._progress.setFormat("%p%")
-        layout.addWidget(self._progress, 2, 0, 1, 4)
+        layout.addWidget(self._progress, 4, 0, 1, 4)
 
         return grp
 
@@ -307,6 +327,7 @@ class MainWindow(QMainWindow):
     def _connect_recorder_signals(self) -> None:
         r = self._recorder
         r.sig_state_changed.connect(self._on_state_changed)
+        r.sig_raw_packet.connect(self._on_raw_packet)
         r.sig_frame_received.connect(self._on_frame_received)
         r.sig_file_saved.connect(self._on_file_saved)
         r.sig_elapsed.connect(self._on_elapsed)
@@ -365,17 +386,35 @@ class MainWindow(QMainWindow):
         elif is_idle:
             self.statusBar().showMessage("待機中")
 
+    @pyqtSlot(int)
+    def _on_raw_packet(self, count: int) -> None:
+        """生 UDP パケット受信数を更新し、フォーマット不一致の可能性を警告する"""
+        self._lbl_udp_pkts.setText(f"{count:,}")
+
+        # UDP パケットは届いているのに受信フレーム数が 0 → フォーマット不一致の疑い
+        if count >= 20:
+            frame_count_text = self._lbl_frames.text().replace(",", "")
+            try:
+                frame_count = int(frame_count_text)
+            except ValueError:
+                frame_count = 0
+            if frame_count == 0:
+                self._lbl_diag.setText(
+                    f"⚠ UDP パケットは {count} 個届いていますが、フレームが1つも認識できていません。\n"
+                    "パケット形式が本アプリの想定と異なる可能性があります。\n"
+                    "コンソールの [診断] ログで「先頭24B」を確認してください。"
+                )
+
     @pyqtSlot(int, int)
     def _on_frame_received(self, frame_id: int, n_points: int) -> None:
-        # フレームカウンターは録画中に増加する
-        doc_block = self._log.document().blockCount()
-        # 毎フレームはログに出さずカウンターだけ更新
         current = self._lbl_frames.text()
         try:
             count = int(current.replace(",", "")) + 1
         except ValueError:
             count = 1
         self._lbl_frames.setText(f"{count:,}")
+        # フレームが認識できたなら診断警告を消す
+        self._lbl_diag.setText("")
 
     @pyqtSlot(str)
     def _on_file_saved(self, path: str) -> None:
@@ -407,8 +446,10 @@ class MainWindow(QMainWindow):
         self._log_message(f"[完了] {saved} ファイルを保存しました → {out}")
         self.statusBar().showMessage(f"録画完了 ({saved} ファイル保存)")
 
-        # フレームカウンターをリセット
+        # カウンターをリセット
+        self._lbl_udp_pkts.setText("0")
         self._lbl_frames.setText("0")
+        self._lbl_diag.setText("")
         self._progress.setValue(0)
         self._lbl_elapsed.setText("00:00:00")
         self._lbl_remain.setText("--:--:--")

@@ -44,8 +44,9 @@ class Recorder(QObject):
     sig_finished()              : 録画完了 (時間切れ or 手動停止)
     """
 
-    sig_state_changed = pyqtSignal(str)
+    sig_state_changed  = pyqtSignal(str)
     sig_frame_received = pyqtSignal(int, int)   # frame_id, n_points
+    sig_raw_packet     = pyqtSignal(int)         # 生UDPパケット通算数
     sig_file_saved     = pyqtSignal(str)
     sig_elapsed        = pyqtSignal(int)
     sig_error          = pyqtSignal(str)
@@ -60,6 +61,7 @@ class Recorder(QObject):
         self._receiver  = UDPReceiver(
             on_frame=self._on_frame,
             on_error=self._on_receiver_error,
+            on_raw_packet=self._on_raw_packet,
         )
         self._detector  = ChangeDetector()
         self._writer:   Optional[PCDWriter] = None
@@ -162,6 +164,10 @@ class Recorder(QObject):
             if path:
                 self._saved_count += 1
                 self.sig_file_saved.emit(path)
+
+    def _on_raw_packet(self, count: int, _head: bytes) -> None:
+        """生 UDP パケット受信コールバック (受信スレッドから呼ばれる)"""
+        self.sig_raw_packet.emit(count)
 
     def _on_receiver_error(self, msg: str) -> None:
         """受信スレッドからのエラー通知 (受信スレッドから呼ばれる)"""
