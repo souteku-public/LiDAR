@@ -36,7 +36,7 @@ from .recorder import Recorder, RecorderState
 DEFAULT_HOST      = "0.0.0.0"
 DEFAULT_PORT      = 8010
 DEFAULT_DURATION  = 60          # 秒
-DEFAULT_VOXEL     = 0.05        # m
+DEFAULT_VOXEL     = 0.20        # m  (5cm だと走査ノイズで差分が効かないため 20cm に)
 DEFAULT_OUTPUT    = r"C:/Users/ntlx4/OneDrive/デスクトップ/LiDAR/falcon k2"
 MAX_LOG_LINES     = 500
 MAX_DURATION_S    = 6 * 3600    # 6 時間 = 21600 秒
@@ -192,7 +192,11 @@ class MainWindow(QMainWindow):
         self._dsb_voxel.setValue(DEFAULT_VOXEL)
         self._dsb_voxel.setToolTip(
             "ボクセルサイズが小さいほど細かな変化を検出します。\n"
-            "大きくすると保存ファイル数が減りますがノイズ耐性も増します。"
+            "ただし小さすぎる (<10cm) と LiDAR のスキャンノイズで\n"
+            "全フレームが「変化」扱いになり差分動作しません。\n\n"
+            "推奨: 0.20m (20cm) — 走査ノイズを許容しつつ人や物の移動を検出\n"
+            "  0.05〜0.10m: 細かい変化向き (差分が多くなる)\n"
+            "  0.30〜0.50m: 大きな物体の移動のみ検出"
         )
         layout.addWidget(self._dsb_voxel, 0, 1)
 

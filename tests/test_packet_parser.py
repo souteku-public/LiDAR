@@ -83,6 +83,38 @@ class TestFalconK2Parser:
         assert np.isnan(frame.points[0, 0])
         assert np.isfinite(frame.points[1, 0])
 
+    def test_x_max_overflow_becomes_nan(self):
+        """X=0xFFFF (距離オーバーフロー) の点は NaN になる"""
+        parser = FalconK2Parser()
+        pts = [(0xFFFF, 0, 0), (5000, 0, 0)]
+        parser.feed(_make_packet(pkt_idx=1, points=pts))
+        frame = parser.feed(_make_packet(pkt_idx=0, points=[(1000, 0, 0)]))
+        assert frame is not None
+        assert np.isnan(frame.points[0, 0])
+        assert np.isfinite(frame.points[1, 0])
+
+    def test_y_saturation_becomes_nan(self):
+        """Y=±32767 (int16境界、無効測定) の点は NaN になる"""
+        parser = FalconK2Parser()
+        pts = [(5000, 32767, 0), (5000, -32768, 0), (5000, 1000, 0)]
+        parser.feed(_make_packet(pkt_idx=1, points=pts))
+        frame = parser.feed(_make_packet(pkt_idx=0, points=[(1000, 0, 0)]))
+        assert frame is not None
+        assert np.isnan(frame.points[0, 0])  # Y=+32767 → NaN
+        assert np.isnan(frame.points[1, 0])  # Y=-32768 → NaN
+        assert np.isfinite(frame.points[2, 0])  # Y=1000 → 有効
+
+    def test_z_saturation_becomes_nan(self):
+        """Z=±32767 の点も NaN になる"""
+        parser = FalconK2Parser()
+        pts = [(5000, 0, 32767), (5000, 0, -32768), (5000, 0, 1000)]
+        parser.feed(_make_packet(pkt_idx=1, points=pts))
+        frame = parser.feed(_make_packet(pkt_idx=0, points=[(1000, 0, 0)]))
+        assert frame is not None
+        assert np.isnan(frame.points[0, 0])
+        assert np.isnan(frame.points[1, 0])
+        assert np.isfinite(frame.points[2, 0])
+
     def test_xyz_units_meters(self):
         """mm → m 変換が正しい"""
         parser = FalconK2Parser()

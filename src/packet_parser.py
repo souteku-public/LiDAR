@@ -155,7 +155,11 @@ class FalconK2Parser:
         """
         9バイト/点 (X u16, Y i16, Z i16, intensity, meta×2) を
         XYZ [m] + intensity の (N, 4) float32 配列にデコードする。
-        X == 0 (戻り信号なし) の点は NaN で表現する。
+
+        無効点 (NaN化対象):
+          - X == 0       : 戻り信号なし
+          - X == 0xFFFF  : 最大距離オーバーフロー (65.535m)
+          - Y or Z == ±int16境界 (-32768 / +32767): 無効測定マーカー
         """
         buf = np.frombuffer(payload[: n_points * POINT_SIZE], dtype=np.uint8)
         buf = buf.reshape(n_points, POINT_SIZE)
@@ -181,8 +185,13 @@ class FalconK2Parser:
         y = y_raw.astype(np.float32) / 1000.0
         z = z_raw.astype(np.float32) / 1000.0
 
-        # X == 0 は戻り信号なし → NaN
-        invalid = x_raw == 0
+        # 無効点フィルター: 境界値・オーバーフロー値を NaN にする
+        invalid = (
+            (x_raw == 0)
+            | (x_raw == 0xFFFF)
+            | (y_raw == 32767) | (y_raw == -32768)
+            | (z_raw == 32767) | (z_raw == -32768)
+        )
         x[invalid] = np.nan
         y[invalid] = np.nan
         z[invalid] = np.nan
