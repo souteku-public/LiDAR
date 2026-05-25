@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QGroupBox, QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,
     QPushButton, QProgressBar, QTextEdit, QFileDialog, QMessageBox,
-    QStatusBar, QFrame, QSizePolicy,
+    QStatusBar, QFrame, QSizePolicy, QCheckBox,
 )
 
 from .recorder import Recorder, RecorderState
@@ -196,6 +196,15 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self._dsb_voxel, 0, 1)
 
+        self._cb_save_raw = QCheckBox("生 UDP パケットを保存する (フォーマット解析用)")
+        self._cb_save_raw.setChecked(False)
+        self._cb_save_raw.setToolTip(
+            "受信した最初の20パケットをそのままバイナリファイル (.bin) として\n"
+            "セッションフォルダ内 packet_dump_xxx/ に保存します。\n"
+            "パケットフォーマットの逆解析やトラブルシュートに使用します。"
+        )
+        layout.addWidget(self._cb_save_raw, 1, 0, 1, 2)
+
         return grp
 
     # ─── コントロールバー ─────────────────────────────────────────────────────
@@ -343,6 +352,7 @@ class MainWindow(QMainWindow):
         duration  = self._sb_duration.value()
         output    = self._le_output.text().strip() or DEFAULT_OUTPUT
         voxel     = self._dsb_voxel.value()
+        save_raw  = self._cb_save_raw.isChecked()
 
         self._recorder.start(
             host=host,
@@ -350,6 +360,7 @@ class MainWindow(QMainWindow):
             duration_s=duration,
             output_dir=output,
             voxel_size=voxel,
+            save_raw_packets=save_raw,
         )
 
     @pyqtSlot()
@@ -378,6 +389,7 @@ class MainWindow(QMainWindow):
         self._sb_duration.setEnabled(is_idle)
         self._le_output.setEnabled(is_idle)
         self._dsb_voxel.setEnabled(is_idle)
+        self._cb_save_raw.setEnabled(is_idle)
 
         if is_recording:
             self.statusBar().showMessage(

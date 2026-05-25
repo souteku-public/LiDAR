@@ -63,6 +63,8 @@ class Recorder(QObject):
             on_error=self._on_receiver_error,
             on_raw_packet=self._on_raw_packet,
         )
+        # 生パケット保存先ディレクトリ (None なら保存しない)
+        self._raw_dump_dir: Optional[str] = None
         self._detector  = ChangeDetector()
         self._writer:   Optional[PCDWriter] = None
         self._output_dir: str = ""
@@ -86,6 +88,7 @@ class Recorder(QObject):
         duration_s: int,
         output_dir: str,
         voxel_size: float = 0.05,
+        save_raw_packets: bool = False,
     ) -> None:
         """録画を開始する"""
         if self._state != RecorderState.IDLE:
@@ -105,6 +108,9 @@ class Recorder(QObject):
 
         self._detector = ChangeDetector(voxel_size=voxel_size)
         self._writer   = PCDWriter(session_dir)
+
+        # 生パケット保存先をレシーバに渡す (フォーマット解析用)
+        self._receiver._raw_dump_dir = session_dir if save_raw_packets else None
 
         self._set_state(RecorderState.CONNECTING)
         self._receiver.start(host, port)

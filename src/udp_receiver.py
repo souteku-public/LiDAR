@@ -8,10 +8,12 @@ on_frame(frame: PointCloudFrame) はメインスレッドではなく
 受信スレッドから呼ばれるため、Qt シグナルに橋渡しすること。
 """
 
+import os
 import socket
 import threading
 import time
 import logging
+from datetime import datetime
 from typing import Callable, Optional
 
 from .packet_parser import FalconK2Parser, PointCloudFrame
@@ -23,6 +25,22 @@ SOCKET_TIMEOUT   = 1.0     # [s]  ソケット受信タイムアウト (停止�
 
 # 診断ログ: 最初の N パケットのみ先頭バイトを出力する
 _DIAG_DUMP_COUNT = 5
+_DIAG_DUMP_BYTES = 64       # 各パケットの先頭何バイトをコンソールに表示するか
+
+# 生パケット保存: 最初の N パケットを .bin として保存する (フォーマット解析用)
+_RAW_SAVE_COUNT = 20
+_RAW_SAVE_DIR_NAME = "packet_dump"   # 出力先サブフォルダ名
+
+
+def _hex_dump(data: bytes, n_bytes: int = 64) -> str:
+    """data の先頭 n_bytes を 16バイト/行 でフォーマットする"""
+    n = min(n_bytes, len(data))
+    lines = []
+    for off in range(0, n, 16):
+        chunk = data[off:off + 16]
+        hex_part = " ".join(f"{b:02x}" for b in chunk)
+        lines.append(f"      {off:04x}: {hex_part}")
+    return "\n" + "\n".join(lines)
 
 
 class UDPReceiver:
@@ -46,10 +64,12 @@ class UDPReceiver:
         on_frame: Callable[[PointCloudFrame], None],
         on_error: Callable[[str], None],
         on_raw_packet: Optional[Callable[[int, bytes], None]] = None,
+        raw_dump_dir: Optional[str] = None,
     ) -> None:
         self._on_frame      = on_frame
         self._on_error      = on_error
         self._on_raw_packet = on_raw_packet
+        self._raw_dump_dir  = raw_dump_dir   # 生パケット保存先 (None なら保存しない)
         self._thread:  Optional[threading.Thread] = None
         self._stop_ev: threading.Event = threading.Event()
         self._sock:    Optional[socket.socket] = None
@@ -95,6 +115,18 @@ class UDPReceiver:
         raw_count = 0          # 生 UDP パケット受信通算数
         parsed_count = 0       # パース成功フレーム数
 
+        # ── 生パケット保存ディレクトリの準備 ──
+        dump_subdir: Optional[str] = None
+        if self._raw_dump_dir:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dump_subdir = os.path.join(self._raw_dump_dir, f"{_RAW_SAVE_DIR_NAME}_{ts}")
+            try:
+                os.makedirs(dump_subdir, exist_ok=True)
+                logger.info("生パケット保存先: %s", dump_subdir)
+            except OSError as exc:
+                logger.warning("生パケット保存ディレクトリ作成失敗: %s", exc)
+                dump_subdir = None
+
         try:
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -118,11 +150,26 @@ class UDPReceiver:
 
             # ── 診断ログ: 最初の数パケットは送信元と先頭バイトを記録 ──
             if raw_count <= _DIAG_DUMP_COUNT:
-                head = data[:24].hex(" ") if len(data) >= 24 else data.hex(" ")
+                hex_dump = _hex_dump(data, _DIAG_DUMP_BYTES)
                 logger.info(
-                    "[診断] パケット#%d  送信元=%s  サイズ=%d bytes  先頭24B: %s",
-                    raw_count, addr, len(data), head,
+                    "[診断] パケット#%d  送信元=%s  サイズ=%d bytes  先頭%dB:%s",
+                    raw_count, addr, len(data), _DIAG_DUMP_BYTES, hex_dump,
                 )
+
+            # ── 生パケットをバイナリファイルに保存 (フォーマット解析用) ──
+            if dump_subdir and raw_count <= _RAW_SAVE_COUNT:
+                try:
+                    fname = f"packet_{raw_count:03d}_{len(data)}b.bin"
+                    fpath = os.path.join(dump_subdir, fname)
+                    with open(fpath, "wb") as f:
+                        f.write(data)
+                    if raw_count == _RAW_SAVE_COUNT:
+                        logger.info(
+                            "[診断] 最初の %d パケットを %s に保存しました",
+                            _RAW_SAVE_COUNT, dump_subdir,
+                        )
+                except OSError as exc:
+                    logger.warning("生パケット保存失敗: %s", exc)
 
             # コールバック通知 (UI カウンター更新用)
             if self._on_raw_packet is not None:
