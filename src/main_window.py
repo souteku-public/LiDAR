@@ -34,10 +34,10 @@ from .recorder import Recorder, RecorderState
 
 # ── 定数 ─────────────────────────────────────────────────────────────────────
 DEFAULT_HOST      = "0.0.0.0"
-DEFAULT_PORT      = 2368
+DEFAULT_PORT      = 8010
 DEFAULT_DURATION  = 60          # 秒
 DEFAULT_VOXEL     = 0.05        # m
-DEFAULT_OUTPUT    = os.path.join(os.path.expanduser("~"), "lidar_output")
+DEFAULT_OUTPUT    = r"C:/Users/ntlx4/OneDrive/デスクトップ/LiDAR/falcon k2"
 MAX_LOG_LINES     = 500
 MAX_DURATION_S    = 6 * 3600    # 6 時間 = 21600 秒
 
