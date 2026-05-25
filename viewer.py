@@ -439,7 +439,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    target = args.path
+    # PowerShell が末尾の "\" を次のクォートをエスケープする扱いにする落とし穴対策:
+    # "C:\path\dir\" と書くとパス末尾に " が混入するため除去する
+    target = args.path.strip().rstrip('"').rstrip("'")
 
     if args.animate:
         if not os.path.isdir(target):
