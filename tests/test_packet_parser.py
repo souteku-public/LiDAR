@@ -18,7 +18,8 @@ packet_parser のユニットテスト (キャリブレーション済み 4ch �
 
 CSV csv_row = pkt_idx * 154 + record_idx = 1*154 + 0 = 154:
   CH0_H ≈ -31.197°, CH0_V ≈ -14.547°
-  → XYZ ≈ (46.198, -27.974, -14.015) m
+  座標系: X=上, Y=右, Z=前 (Seyond User Manual §1.3)
+  → XYZ ≈ (-14.015, -27.975, 46.197) m
 """
 
 import struct
@@ -224,10 +225,10 @@ class TestCalibratedConversion:
           CH0 = 55,796 mm = 55.796 m
           CH0_H ≈ -31.197°, CH0_V ≈ -14.547°
 
-        期待 XYZ (球面変換):
-          x ≈ 46.198 m
-          y ≈ -27.974 m
-          z ≈ -14.015 m
+        期待 XYZ (Seyond 座標系: X=上, Y=右, Z=前):
+          x ≈ -14.015 m  (上方向)
+          y ≈ -27.975 m  (右方向)
+          z ≈  46.197 m  (前方向)
         """
         parser = FalconK2Parser()
         hdr   = bytearray(_make_header(pkt_idx=1, pkt_size=63))
@@ -242,9 +243,7 @@ class TestCalibratedConversion:
         if _SCAN_VALID is None or not _SCAN_VALID[csv_row]:
             pytest.skip("csv_row=154 が無効のためスキップ")
 
-        # CH0 の点が含まれているはず (CH1~CH3 は極小値で除外)
-        # CH1=834mm=0.834m はゼロでないので出力される場合がある
-        # CH0 の点 (55.796m) は最も遠いので最初に来るはず
+        # CH0 の点が含まれているはず (55.796m, 最も遠い点)
         assert frame.points.shape[0] >= 1
 
         # 各点の距離を計算して最も遠い点を CH0 と判断
@@ -254,9 +253,10 @@ class TestCalibratedConversion:
 
         x, y, z, intensity = frame.points[far_idx]
 
-        assert abs(x - 46.198) < 0.5, f"x={x:.3f} (期待 ≈46.198)"
-        assert abs(y - (-27.974)) < 0.5, f"y={y:.3f} (期待 ≈-27.974)"
-        assert abs(z - (-14.015)) < 0.5, f"z={z:.3f} (期待 ≈-14.015)"
+        # Seyond 座標系: X=上, Y=右, Z=前
+        assert abs(x - (-14.015)) < 0.5, f"x={x:.3f} (期待 ≈-14.015, 上方向)"
+        assert abs(y - (-27.975)) < 0.5, f"y={y:.3f} (期待 ≈-27.975, 右方向)"
+        assert abs(z -   46.197)  < 0.5, f"z={z:.3f} (期待 ≈46.197, 前方向)"
         assert intensity == 24.0, f"intensity={intensity} (期待 24)"
 
     def test_realworld_scan_ch0_hfov(self):

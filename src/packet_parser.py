@@ -20,13 +20,13 @@ Benewake Falcon K2 LiDAR UDP Packet Parser
 角度マッピング (0ベース pkt_idx):
   csv_row = (pkt_idx * RECORDS_PER_PACKET + record_idx) % CSV_ROWS
 
-XYZ 変換 (球面座標系):
+XYZ 変換 (Seyond LiDAR 座標系, User Manual §1.3 より):
   az  = H_angle [rad]   (水平角, 前方=0, 右が正)
   el  = V_angle [rad]   (垂直角, 上が正)
   r   = distance [m]
-  x   = r * cos(el) * cos(az)   (前方深度)
-  y   = r * cos(el) * sin(az)   (横方向, 右が正)
-  z   = r * sin(el)              (高さ)
+  x   = r * sin(el)              (上方向, X軸 = 垂直・上向き)
+  y   = r * cos(el) * sin(az)   (右方向, Y軸 = 水平・右向き)
+  z   = r * cos(el) * cos(az)   (前方向, Z軸 = 水平・前向き)
 
 ヘッダー: 54 bytes (offset 0x00-0x35)
   0x00-0x01  bytes     マジック 6a 17
@@ -310,9 +310,10 @@ class FalconK2Parser:
             el_v = el[valid_pt].astype(np.float32)
 
             cos_el = np.cos(el_v)
-            x = r * cos_el * np.cos(az_v)
-            y = r * cos_el * np.sin(az_v)
-            z = r * np.sin(el_v)
+            # Seyond 座標系: X=上, Y=右, Z=前 (User Manual §1.3)
+            x = r * np.sin(el_v)              # 上方向
+            y = r * cos_el * np.sin(az_v)     # 右方向
+            z = r * cos_el * np.cos(az_v)     # 前方向
 
             ch_pts = np.empty((valid_pt.sum(), 4), dtype=np.float32)
             ch_pts[:, 0] = x
