@@ -75,7 +75,7 @@ RAD_PER_UNIT              = math.pi / 32768.0     # 1 InnoAngleUnit [rad]
 V_ANGLE_BASE_PER_CH       = 196                   # kInnoFaconVAngleDiffBase
 
 # ヘッダーフィールドオフセット
-OFFSET_PKT_SIZE           = 8                     # パケットサイズ (uint32 LE)
+OFFSET_PKT_SIZE           = 10                    # パケットサイズ (uint32 LE) = 0x0A
 OFFSET_FRAME_IDX          = 26                    # frame_idx     (uint64 LE)
 OFFSET_TYPE_NUM           = 38                    # type + item_number (uint32 LE)
 OFFSET_ITEM_SIZE          = 42                    # item_size     (uint16 LE)

@@ -69,7 +69,7 @@ def _make_header(
     buf[0:2] = PACKET_MAGIC
     # version
     buf[2] = 1
-    # pkt_size at offset 8
+    # pkt_size at offset 10 (= 0x0A)
     if pkt_size is None:
         pkt_size = HEADER_SIZE + n_blocks * BLOCK1_SIZE
     struct.pack_into('<I', buf, OFFSET_PKT_SIZE, pkt_size)
