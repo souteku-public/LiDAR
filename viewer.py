@@ -6,24 +6,27 @@ Falcon K2 LiDAR Recorder - PCD ビューアー
 保存された .pcd ファイルを 3D で表示するツール。
 
 使い方:
+    # 連番アニメーション再生 (PyQt5 + matplotlib GUI)
+    python viewer.py --animate path/to/session_dir/
+    python viewer.py --animate path/to/session_dir/ --fps 20
+    python viewer.py --animate path/to/session_dir/ --loop
+    python viewer.py --animate path/to/session_dir/ --accumulate
+
     # 1 ファイルを指定して表示
     python viewer.py path/to/file.pcd
 
     # ディレクトリを指定 → ファイル一覧から選んで表示
     python viewer.py path/to/session_dir/
 
-    # 連番アニメーション再生 (open3d 必須)
-    python viewer.py --animate path/to/session_dir/
-    python viewer.py --animate path/to/session_dir/ --fps 20
-    python viewer.py --animate path/to/session_dir/ --accumulate
+    # ディレクトリ内容の統計を表示 (データ診断)
+    python viewer.py --inspect path/to/session_dir/
 
     # 引数なしで起動 → デフォルト出力先から選択
     python viewer.py
 
 必要ライブラリ:
-    pip install open3d          # 3D ビューアー (推奨)
-    pip install matplotlib      # open3d がない場合のフォールバック
-    pip install numpy           # 必須 (既にインストール済みのはず)
+    pip install PyQt5 matplotlib numpy   # アニメーションビューアー必須
+    pip install open3d                   # 単ファイル表示の推奨 (なければ matplotlib)
 """
 
 import sys
@@ -61,14 +64,9 @@ def read_pcd(filepath: str) -> np.ndarray:
 
 
 def filter_valid(points: np.ndarray) -> np.ndarray:
-    """
-    NaN / Inf を含む点を除去して有効点のみを返す。
-
-    Falcon K2 は「戻り信号なし」の点を float32 NaN で送信する。
-    表示や変化検出の前にこのフィルターを通す。
-    """
+    """NaN / Inf を含む点を除去して有効点のみを返す。"""
     xyz = points[:, :3]
-    valid = np.isfinite(xyz).all(axis=1)   # x,y,z がすべて有限値の行
+    valid = np.isfinite(xyz).all(axis=1)
     return points[valid]
 
 
@@ -95,18 +93,17 @@ def pcd_info(filepath: str, points: np.ndarray) -> None:
     print(f"{'─'*50}")
 
 
-# ── ビューアー本体 ────────────────────────────────────────────────────────────
+# ── 単ファイルビューアー ──────────────────────────────────────────────────────
 
 def view_with_open3d(points: np.ndarray, title: str = "PCD Viewer") -> None:
     """open3d を使った 3D 表示"""
     import open3d as o3d
 
-    pts = filter_valid(points)   # NaN / Inf を除去
+    pts = filter_valid(points)
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pts[:, :3].astype(np.float64))
 
-    # Z 高さを色にマップ (グレースケール)
     if len(pts) > 0:
         z = pts[:, 2]
         z_min, z_max = z.min(), z.max()
@@ -117,57 +114,39 @@ def view_with_open3d(points: np.ndarray, title: str = "PCD Viewer") -> None:
         colors = np.stack([norm, norm, norm], axis=1)
         pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
 
-    print("\n  操作方法:")
-    print("    マウス左ドラッグ  : 回転")
-    print("    マウス右ドラッグ  : 移動")
-    print("    ホイール         : ズーム")
-    print("    Q / Esc         : 終了")
-
-    o3d.visualization.draw_geometries(
-        [pcd],
-        window_name=title,
-        width=1024,
-        height=768,
-    )
+    print("\n  操作: マウス左=回転 / 右=移動 / ホイール=ズーム / Q=終了")
+    o3d.visualization.draw_geometries([pcd], window_name=title, width=1024, height=768)
 
 
 def view_with_matplotlib(points: np.ndarray, title: str = "PCD Viewer") -> None:
-    """matplotlib を使った簡易 3D 表示 (open3d がない場合)"""
+    """matplotlib を使った簡易 3D 表示"""
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-    pts = filter_valid(points)   # NaN / Inf を除去
+    pts = filter_valid(points)
     if len(pts) == 0:
         print("  ⚠ 有効な点がないため表示できません")
         return
 
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
-
     xyz = pts[:, :3]
 
-    # 点数が多い場合はダウンサンプリング
     MAX_DISPLAY = 50_000
     if len(xyz) > MAX_DISPLAY:
         idx = np.random.choice(len(xyz), MAX_DISPLAY, replace=False)
         xyz = xyz[idx]
-        print(f"  ※ 表示点数を {MAX_DISPLAY:,} 点にダウンサンプリングしました")
 
-    ax.scatter(
-        xyz[:, 0], xyz[:, 1], xyz[:, 2],
-        s=0.5, c=xyz[:, 2],
-        cmap="viridis", alpha=0.7,
-    )
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_zlabel("Z [m]")
+    ax.scatter(xyz[:, 0], xyz[:, 1], xyz[:, 2],
+               s=0.5, c=xyz[:, 2], cmap="viridis", alpha=0.7)
+    ax.set_xlabel("X [m]"); ax.set_ylabel("Y [m]"); ax.set_zlabel("Z [m]")
     ax.set_title(title)
     plt.tight_layout()
     plt.show()
 
 
 def view(filepath: str) -> None:
-    """PCD ファイルを表示する (ライブラリが利用可能な方を自動選択)"""
+    """PCD ファイルを表示する"""
     print(f"\n読み込み中: {filepath}")
     points = read_pcd(filepath)
     pcd_info(filepath, points)
@@ -178,42 +157,32 @@ def view(filepath: str) -> None:
 
     valid = filter_valid(points)
     if len(valid) == 0:
-        print("  ⚠ 有効な点が 0 点です (全点が NaN/Inf)。")
-        print("    → パケットフォーマットが正しくパースできていない可能性があります。")
+        print("  ⚠ 有効な点が 0 点です。")
         return
 
     title = os.path.basename(filepath)
 
-    # open3d を優先して試みる
     try:
         import open3d  # noqa: F401
-        print("  open3d で表示します...")
         view_with_open3d(points, title)
         return
     except ImportError:
         pass
 
-    # matplotlib にフォールバック
     try:
         import matplotlib  # noqa: F401
-        print("  matplotlib で表示します (簡易表示)...")
-        print("  ヒント: `pip install open3d` でより高品質な表示が可能です。")
         view_with_matplotlib(points, title)
         return
     except ImportError:
         pass
 
-    print("  ⚠ 表示ライブラリが見つかりません。")
-    print("    pip install open3d  または  pip install matplotlib  を実行してください。")
+    print("  ⚠ open3d か matplotlib をインストールしてください。")
 
 
 # ── ディレクトリ一括検査 ──────────────────────────────────────────────────────
 
 def inspect_directory(directory: str, sample_count: int = 5) -> None:
-    """
-    ディレクトリ内の全 PCD ファイルを検査して統計をまとめて表示する。
-    白画面・データ異常の切り分け診断用。
-    """
+    """ディレクトリ内の全 PCD ファイルを検査して統計を表示する。"""
     files = sorted(glob.glob(os.path.join(directory, "**", "*.pcd"), recursive=True))
     if not files:
         print(f"  ⚠ {directory} に .pcd ファイルが見つかりません")
@@ -230,8 +199,8 @@ def inspect_directory(directory: str, sample_count: int = 5) -> None:
     all_y: list = []
     all_z: list = []
     sample_indices = sorted(set(
-        list(range(min(sample_count, len(files)))) +     # 先頭 N
-        list(range(max(0, len(files) - sample_count), len(files)))  # 末尾 N
+        list(range(min(sample_count, len(files)))) +
+        list(range(max(0, len(files) - sample_count), len(files)))
     ))
 
     for i, fp in enumerate(files):
@@ -239,7 +208,7 @@ def inspect_directory(directory: str, sample_count: int = 5) -> None:
         total_size += size_kb
         try:
             pts = read_pcd(fp)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"  [{i+1:4d}] ⚠ 読み込みエラー: {os.path.basename(fp)} ({e})")
             continue
 
@@ -253,7 +222,6 @@ def inspect_directory(directory: str, sample_count: int = 5) -> None:
             all_y.extend([valid[:, 1].min(), valid[:, 1].max()])
             all_z.extend([valid[:, 2].min(), valid[:, 2].max()])
 
-        # 詳細表示は先頭/末尾の数ファイルだけ
         if i in sample_indices:
             fname = os.path.basename(fp)[:48]
             if n_valid > 0:
@@ -270,276 +238,488 @@ def inspect_directory(directory: str, sample_count: int = 5) -> None:
     print("  ─" * 35)
     print(f"  総容量        : {total_size:.1f} KB ({total_size/1024:.1f} MB)")
     print(f"  総点数        : {total_pts:,}")
-    print(f"  有効点数      : {total_valid:,} "
-          f"({total_valid/total_pts*100:.1f}%)" if total_pts > 0 else "")
+    if total_pts > 0:
+        print(f"  有効点数      : {total_valid:,} ({total_valid/total_pts*100:.1f}%)")
     if all_x:
         print(f"  全体 X 範囲   : {min(all_x):+8.3f} 〜 {max(all_x):+8.3f} m")
         print(f"  全体 Y 範囲   : {min(all_y):+8.3f} 〜 {max(all_y):+8.3f} m")
         print(f"  全体 Z 範囲   : {min(all_z):+8.3f} 〜 {max(all_z):+8.3f} m")
     print("  ─" * 35)
 
-    # 健全性チェック
     print("\n  ◆ 診断結果:")
     if total_valid == 0:
-        print("    ✗ 有効点が 1 つもありません。")
-        print("      → パケットパーサーの XYZ フォーマットが不一致の可能性が高いです。")
-    elif total_valid / total_pts < 0.05:
-        print(f"    ⚠ 有効点比率が低い ({total_valid/total_pts*100:.1f}%)")
-        print("      → 多くの点が NaN です。LiDAR の視野外/反射弱が多いか、")
-        print("        フォーマット不一致の可能性があります。")
+        print("    ✗ 有効点が 1 つもありません。パーサーの XYZ フォーマット不一致の可能性。")
     elif all_x and (max(abs(min(all_x)), abs(max(all_x))) > 1000 or
-                    max(abs(min(all_y)), abs(max(all_y))) > 1000):
+                   max(abs(min(all_y)), abs(max(all_y))) > 1000):
         print("    ⚠ 座標値が異常に大きいです (>1000m)")
-        print("      → XYZ がメートル単位ではなくミリ単位の可能性、または")
-        print("        浮動小数の解釈ズレの可能性があります。")
     elif all_x and (max(all_x) - min(all_x)) < 0.1:
         print("    ⚠ 座標範囲が極端に狭いです (<0.1m)")
-        print("      → ほぼ同じ位置の点ばかりです。")
     else:
         print("    ✓ データは概ね妥当に見えます。")
-        print(f"      測定範囲 X:{max(all_x)-min(all_x):.1f}m  "
-              f"Y:{max(all_y)-min(all_y):.1f}m  "
-              f"Z:{max(all_z)-min(all_z):.1f}m")
+        if all_x:
+            print(f"      測定範囲 X:{max(all_x)-min(all_x):.1f}m  "
+                  f"Y:{max(all_y)-min(all_y):.1f}m  "
+                  f"Z:{max(all_z)-min(all_z):.1f}m")
 
     if len(files) > 1:
         first_size = os.path.getsize(files[0]) / 1024
         avg_other = sum(os.path.getsize(f) for f in files[1:]) / len(files[1:]) / 1024
         ratio = first_size / avg_other if avg_other > 0 else float("inf")
         print(f"\n  ◆ フレーム境界検出:")
-        print(f"    1枚目         : {first_size:8.1f} KB")
-        print(f"    2枚目以降平均  : {avg_other:8.1f} KB")
-        if ratio > 5:
-            print(f"    → 1枚目 / 平均 = {ratio:.1f}倍  (正常な差分動作)")
-        else:
-            print(f"    → 1枚目 / 平均 = {ratio:.1f}倍")
-            print(f"      差分動作になっていない可能性があります。")
-            print(f"      (1枚目だけ大きく、後は小さくなるのが期待値)")
+        print(f"    1枚目: {first_size:.1f} KB  /  2枚目以降平均: {avg_other:.1f} KB"
+              f"  (比率: {ratio:.1f}倍)")
 
 
-# ── 連番アニメーション再生 ────────────────────────────────────────────────────
+# ── PyQt5 シーケンスビューアー ────────────────────────────────────────────────
 
-def animate_sequence(
+def run_sequence_viewer(
     directory: str,
     fps: float = 10.0,
     accumulate: bool = False,
     loop: bool = False,
 ) -> None:
-    """
-    PCD ファイル群を連番アニメーションとして再生する (open3d 必須)。
+    """PyQt5 + matplotlib によるシーケンスビューアーを起動する。"""
 
-    Parameters
-    ----------
-    directory  : str   PCD ファイルのあるディレクトリ (再帰検索)
-    fps        : float 再生フレームレート [Hz]
-    accumulate : bool  True にすると点群を累積表示する
-                       (差分PCDの全体像を見たいとき)。
-                       False は各PCDを単独表示。
-    loop       : bool  True にすると最終フレームの後、先頭に戻り繰り返す。
+    # ── 依存ライブラリの遅延インポート ──
+    try:
+        from PyQt5.QtWidgets import (
+            QApplication, QMainWindow, QWidget,
+            QVBoxLayout, QHBoxLayout,
+            QPushButton, QCheckBox, QLabel, QSlider, QProgressBar,
+            QSizePolicy,
+        )
+        from PyQt5.QtCore import Qt, QTimer
+        from PyQt5.QtGui import QColor, QPalette, QFont
+    except ImportError:
+        print("  ⚠ PyQt5 が必要です: pip install PyQt5")
+        return
 
-    キー操作:
-        SPACE  : 再生 / 一時停止
-        →      : 次のフレーム (一時停止)
-        ←      : 前のフレーム (一時停止)
-        =      : 再生速度 1.5 倍
-        -      : 再生速度 1/1.5
-        L      : ループ再生 ON / OFF トグル
-        F      : フィルタ ON / OFF トグル (有効点のみ ↔ 全点表示)
-        R      : 視点リセット
-        C      : 累積表示クリア (accumulate モード時)
-        Q / Esc: 終了
-    """
+    try:
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        import matplotlib
+        matplotlib.use("Qt5Agg")
+    except ImportError:
+        print("  ⚠ matplotlib が必要です: pip install matplotlib")
+        return
+
     files = sorted(glob.glob(os.path.join(directory, "**", "*.pcd"), recursive=True))
     if not files:
         print(f"  ⚠ {directory} に .pcd ファイルが見つかりません")
         return
 
-    try:
-        import open3d as o3d
-    except ImportError:
-        print("  ⚠ open3d が必要です。`pip install open3d` を実行してください。")
-        return
+    print(f"  {len(files)} ファイルをビューアーで開きます...")
 
-    mode = "累積表示" if accumulate else "単独表示"
-    loop_label = "ループON" if loop else "ループOFF"
-    print(f"\n  {len(files)} ファイルを {fps:.1f} FPS で再生 ({mode} / {loop_label})")
-    print("  ─" * 30)
-    print("  操作: SPACE=再生停止  ←/→=前後  +/-=速度  L=ループ切替  F=フィルタ切替  R=視点  C=累積クリア  Q=終了")
-    print("  ─" * 30)
+    # ─────────────────────────────────────────────────────────────────────────
+    class PCDViewerWindow(QMainWindow):
+        """PyQt5 + matplotlib PCD シーケンスビューアー"""
 
-    vis = o3d.visualization.VisualizerWithKeyCallback()
-    vis.create_window(
-        window_name=f"PCD Sequence ({len(files)} files)",
-        width=1024, height=768,
-    )
+        MAX_PTS = 60_000   # 描画上限 (ダウンサンプリング)
 
-    state = {
-        "idx":                0,
-        "playing":            True,
-        "fps":                fps,
-        "last_update":        time.time(),
-        "accumulated_points": [],   # accumulate モード用
-        "loop":               loop,   # ループ再生フラグ
-        "filter_on":          True,   # True=有効点のみ / False=全点表示
-    }
+        def __init__(self):
+            super().__init__()
+            self._files      = files
+            self._idx        = 0
+            self._fps        = fps
+            self._playing    = False
+            self._accum_pts: list = []
+            self._elev       = 20.0   # matplotlib 3D 視点 elevation
+            self._azim       = -60.0  # matplotlib 3D 視点 azimuth
 
-    pcd_geom = o3d.geometry.PointCloud()
+            self._build_ui()
+            self._apply_dark_theme()
+            self.setWindowTitle(
+                f"PCD Viewer  —  {len(files)} ファイル  |  "
+                f"{os.path.basename(directory)}"
+            )
+            self.resize(1100, 840)
 
-    def _colorize(pts: np.ndarray) -> np.ndarray:
-        z = pts[:, 2]
-        z_min, z_max = z.min(), z.max()
-        if z_max > z_min:
-            norm = (z - z_min) / (z_max - z_min)
-        else:
-            norm = np.ones(len(pts)) * 0.5
-        # viridis 風配色 (青→緑→黄)
-        r = np.clip(1.5 - 4 * np.abs(norm - 0.75), 0, 1)
-        g = np.clip(1.5 - 4 * np.abs(norm - 0.5),  0, 1)
-        b = np.clip(1.5 - 4 * np.abs(norm - 0.25), 0, 1)
-        return np.stack([r, g, b], axis=1)
+            # タイマー
+            self._timer = QTimer(self)
+            self._timer.timeout.connect(self._timer_tick)
 
-    def _load(i: int) -> None:
-        try:
-            raw = read_pcd(files[i])
-            pts = filter_valid(raw) if state["filter_on"] else raw
-        except Exception as e:  # noqa: BLE001
-            print(f"\n  読み込み失敗: {files[i]} ({e})")
-            return
-        if accumulate:
+            # 初期表示: 最大ファイルで視点を合わせてから先頭へ
+            init_idx = max(range(len(files)),
+                           key=lambda i: os.path.getsize(files[i]))
+            self._load_frame(init_idx, reset_view=True)
+            self._load_frame(0, reset_view=False)
+
+        # ── UI 構築 ───────────────────────────────────────────────────────────
+
+        def _build_ui(self):
+            central = QWidget()
+            self.setCentralWidget(central)
+            root = QVBoxLayout(central)
+            root.setContentsMargins(6, 6, 6, 6)
+            root.setSpacing(4)
+
+            # ── matplotlib 3D キャンバス ──
+            self._fig = Figure(facecolor="#1a1a2e")
+            self._ax  = self._fig.add_subplot(111, projection="3d")
+            self._canvas = FigureCanvasQTAgg(self._fig)
+            self._canvas.setSizePolicy(
+                QSizePolicy.Expanding, QSizePolicy.Expanding
+            )
+            root.addWidget(self._canvas, stretch=1)
+
+            # ── シークバー ──
+            self._seekbar = QProgressBar()
+            self._seekbar.setRange(0, max(1, len(files) - 1))
+            self._seekbar.setValue(0)
+            self._seekbar.setTextVisible(False)
+            self._seekbar.setFixedHeight(6)
+            root.addWidget(self._seekbar)
+
+            # ── トランスポート行 ──
+            tr_widget = QWidget()
+            tr = QHBoxLayout(tr_widget)
+            tr.setContentsMargins(0, 2, 0, 2)
+            tr.setSpacing(4)
+
+            self._btn_first = self._mkbtn("⏮", "先頭へ (Home)",        self._on_first, 36)
+            self._btn_prev  = self._mkbtn("◀",  "前のフレーム (←)",     self._on_prev,  36)
+            self._btn_play  = self._mkbtn("▶",  "再生 / 一時停止 (Space)", self._on_play_toggle, 52)
+            self._btn_next  = self._mkbtn("▶|", "次のフレーム (→)",     self._on_next,  36)
+            self._btn_last  = self._mkbtn("⏭",  "末尾へ (End)",          self._on_last,  36)
+
+            for b in [self._btn_first, self._btn_prev, self._btn_play,
+                      self._btn_next, self._btn_last]:
+                b.setFixedHeight(36)
+                tr.addWidget(b)
+
+            tr.addSpacing(12)
+
+            lbl_fps = QLabel("FPS:")
+            lbl_fps.setFixedWidth(28)
+            tr.addWidget(lbl_fps)
+
+            self._fps_slider = QSlider(Qt.Horizontal)
+            self._fps_slider.setRange(1, 60)
+            self._fps_slider.setValue(int(self._fps))
+            self._fps_slider.setFixedWidth(120)
+            self._fps_slider.setToolTip("再生速度を調整 (1〜60 FPS)")
+            tr.addWidget(self._fps_slider)
+
+            self._lbl_fps = QLabel(f"{int(self._fps)}")
+            self._lbl_fps.setFixedWidth(26)
+            tr.addWidget(self._lbl_fps)
+
+            tr.addStretch()
+
+            self._lbl_info = QLabel("")
+            self._lbl_info.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self._lbl_info.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            tr.addWidget(self._lbl_info)
+
+            root.addWidget(tr_widget)
+
+            # ── オプション行 ──
+            opt_widget = QWidget()
+            opt = QHBoxLayout(opt_widget)
+            opt.setContentsMargins(0, 2, 0, 2)
+            opt.setSpacing(12)
+
+            self._cb_loop   = QCheckBox("↺  ループ再生")
+            self._cb_filter = QCheckBox("フィルタ（有効点のみ）")
+            self._cb_accum  = QCheckBox("累積表示")
+
+            self._cb_loop.setChecked(loop)
+            self._cb_filter.setChecked(True)
+            self._cb_accum.setChecked(accumulate)
+
+            self._cb_loop.setToolTip(
+                "ON: 最終フレームで先頭に戻りループ再生\n"
+                "OFF: 最終フレームで停止"
+            )
+            self._cb_filter.setToolTip(
+                "ON: NaN/Inf を含む無効点を除外して表示（推奨）\n"
+                "OFF: ファイル内のすべての点をそのまま表示"
+            )
+            self._cb_accum.setToolTip(
+                "ON: フレームを重ねて累積表示（差分PCDの全体像を確認するのに便利）\n"
+                "OFF: 各フレームを単独表示"
+            )
+
+            opt.addWidget(self._cb_loop)
+            opt.addWidget(self._cb_filter)
+            opt.addWidget(self._cb_accum)
+
+            self._btn_clear = QPushButton("累積クリア")
+            self._btn_clear.setFixedHeight(28)
+            self._btn_clear.setEnabled(accumulate)
+            self._btn_clear.setToolTip("累積表示をリセットして先頭フレームから再描画")
+            opt.addWidget(self._btn_clear)
+
+            opt.addStretch()
+
+            self._btn_reset = QPushButton("視点リセット")
+            self._btn_reset.setFixedHeight(28)
+            self._btn_reset.setToolTip("3D ビューの視点を初期状態に戻す")
+            opt.addWidget(self._btn_reset)
+
+            root.addWidget(opt_widget)
+
+            # ── シグナル接続 ──
+            self._fps_slider.valueChanged.connect(self._on_fps_changed)
+            self._cb_loop.toggled.connect(lambda _: None)   # 状態は isChecked() で参照
+            self._cb_filter.toggled.connect(self._on_filter_toggled)
+            self._cb_accum.toggled.connect(self._on_accum_toggled)
+            self._btn_clear.clicked.connect(self._on_clear_accum)
+            self._btn_reset.clicked.connect(self._on_reset_view)
+
+        @staticmethod
+        def _mkbtn(text, tip, slot, w):
+            b = QPushButton(text)
+            b.setFixedWidth(w)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            return b
+
+        def _apply_dark_theme(self):
+            """ダークテーマを適用する"""
+            self.setStyleSheet("""
+                QMainWindow, QWidget {
+                    background-color: #1e1e2e;
+                    color: #cdd6f4;
+                }
+                QPushButton {
+                    background-color: #313244;
+                    color: #cdd6f4;
+                    border: 1px solid #45475a;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                }
+                QPushButton:hover   { background-color: #45475a; }
+                QPushButton:pressed { background-color: #585b70; }
+                QPushButton:disabled{ background-color: #1e1e2e; color: #6c7086; }
+                QCheckBox { color: #cdd6f4; spacing: 6px; }
+                QCheckBox::indicator {
+                    width: 16px; height: 16px;
+                    border: 1px solid #45475a;
+                    border-radius: 3px;
+                    background: #313244;
+                }
+                QCheckBox::indicator:checked {
+                    background: #89b4fa;
+                    border-color: #89b4fa;
+                }
+                QLabel  { color: #cdd6f4; }
+                QSlider::groove:horizontal {
+                    height: 4px;
+                    background: #45475a;
+                    border-radius: 2px;
+                }
+                QSlider::handle:horizontal {
+                    background: #89b4fa;
+                    width: 14px; height: 14px;
+                    margin: -5px 0;
+                    border-radius: 7px;
+                }
+                QProgressBar {
+                    background: #313244;
+                    border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar::chunk {
+                    background: #89b4fa;
+                    border-radius: 3px;
+                }
+            """)
+
+        # ── フレーム読み込み・描画 ─────────────────────────────────────────────
+
+        def _load_frame(self, idx: int, reset_view: bool = False) -> None:
+            if not self._files:
+                return
+            idx = max(0, min(idx, len(self._files) - 1))
+            self._idx = idx
+
+            try:
+                raw = read_pcd(self._files[idx])
+                pts = filter_valid(raw) if self._cb_filter.isChecked() else raw
+            except Exception as e:
+                print(f"  読み込み失敗: {self._files[idx]} ({e})")
+                return
+
+            if self._cb_accum.isChecked():
+                if len(pts) > 0:
+                    self._accum_pts.append(pts)
+                pts = (np.concatenate(self._accum_pts, axis=0)
+                       if self._accum_pts else pts)
+
+            self._draw_pts(pts, reset_view=reset_view)
+
+            # UI 更新
+            fname = os.path.basename(self._files[idx])
+            n_pts = len(pts)
+            self._lbl_info.setText(
+                f"[{idx+1:>5} / {len(self._files)}]  {fname}  ({n_pts:,} pts)"
+            )
+            self._seekbar.setValue(idx)
+
+        def _draw_pts(self, pts: np.ndarray, reset_view: bool = False) -> None:
+            """matplotlib 3D 散布図を再描画する"""
+            # 視点を保存
+            if not reset_view:
+                try:
+                    self._elev = self._ax.elev
+                    self._azim = self._ax.azim
+                except Exception:
+                    pass
+
+            self._ax.cla()
+            self._ax.set_facecolor("#0d1117")
+            self._fig.patch.set_facecolor("#1a1a2e")
+
             if len(pts) > 0:
-                state["accumulated_points"].append(pts)
-            if state["accumulated_points"]:
-                pts = np.concatenate(state["accumulated_points"], axis=0)
-        if len(pts) == 0:
-            return
-        pcd_geom.points = o3d.utility.Vector3dVector(pts[:, :3].astype(np.float64))
-        pcd_geom.colors = o3d.utility.Vector3dVector(_colorize(pts).astype(np.float64))
-        fname = os.path.basename(files[i])
-        loop_mark = "↺" if state["loop"] else " "
-        filt_mark = "F" if state["filter_on"] else "-"
-        print(f"\r  [{i+1:5d}/{len(files):5d}] {loop_mark}{filt_mark} {fname:48s} ({len(pts):>8,} pts)",
-              end="", flush=True)
+                xyz = pts[:, :3]
 
-    # ── キーコールバック ──
-    def toggle_play(_vis):
-        state["playing"] = not state["playing"]
-        status = "▶ 再生" if state["playing"] else "⏸ 一時停止"
-        print(f"\n  {status}")
-        return False
+                # ダウンサンプリング
+                if len(xyz) > self.MAX_PTS:
+                    rng = np.random.default_rng(42)
+                    sel = rng.choice(len(xyz), self.MAX_PTS, replace=False)
+                    xyz = xyz[sel]
 
-    def next_frame(_vis):
-        state["playing"] = False
-        if state["idx"] < len(files) - 1:
-            state["idx"] += 1
-            _load(state["idx"])
-            _vis.update_geometry(pcd_geom)
-        return False
+                # Z 方向グラデーション (viridis 風)
+                z = xyz[:, 2]
+                z_min, z_max = z.min(), z.max()
+                norm = ((z - z_min) / (z_max - z_min)
+                        if z_max > z_min else np.full(len(z), 0.5))
 
-    def prev_frame(_vis):
-        state["playing"] = False
-        if state["idx"] > 0:
-            if accumulate and state["accumulated_points"]:
-                state["accumulated_points"].pop()
-            state["idx"] -= 1
-            _load(state["idx"])
-            _vis.update_geometry(pcd_geom)
-        return False
+                r = np.clip(1.5 - 4 * np.abs(norm - 0.75), 0, 1)
+                g = np.clip(1.5 - 4 * np.abs(norm - 0.50), 0, 1)
+                b = np.clip(1.5 - 4 * np.abs(norm - 0.25), 0, 1)
+                colors = np.stack([r, g, b], axis=1)
 
-    def speed_up(_vis):
-        state["fps"] = min(120.0, state["fps"] * 1.5)
-        print(f"\n  速度: {state['fps']:.1f} FPS")
-        return False
+                self._ax.scatter(
+                    xyz[:, 0], xyz[:, 1], xyz[:, 2],
+                    c=colors, s=0.8, alpha=0.85, linewidths=0,
+                )
 
-    def speed_down(_vis):
-        state["fps"] = max(0.5, state["fps"] / 1.5)
-        print(f"\n  速度: {state['fps']:.1f} FPS")
-        return False
+            # 軸スタイル
+            for spine in [self._ax.xaxis, self._ax.yaxis, self._ax.zaxis]:
+                spine.label.set_color("#6c7086")
+                spine.set_tick_params(labelcolor="#6c7086", labelsize=7)
+                spine.line.set_color("#313244")
+                spine.pane.set_edgecolor("#313244")
+                spine.pane.fill = False
 
-    def toggle_loop(_vis):
-        state["loop"] = not state["loop"]
-        status = "↺ ループON" if state["loop"] else "→ ループOFF"
-        print(f"\n  {status}")
-        return False
+            self._ax.set_xlabel("X [m]", labelpad=2)
+            self._ax.set_ylabel("Y [m]", labelpad=2)
+            self._ax.set_zlabel("Z [m]", labelpad=2)
+            self._ax.view_init(elev=self._elev, azim=self._azim)
+            self._canvas.draw_idle()
 
-    def toggle_filter(_vis):
-        state["filter_on"] = not state["filter_on"]
-        status = "フィルタON（有効点のみ）" if state["filter_on"] else "フィルタOFF（全点表示）"
-        print(f"\n  {status}")
-        # 現在フレームを再描画
-        _load(state["idx"])
-        _vis.update_geometry(pcd_geom)
-        return False
+        # ── タイマー ─────────────────────────────────────────────────────────
 
-    def reset_view(_vis):
-        _vis.reset_view_point(True)
-        return False
+        def _timer_tick(self):
+            if self._idx < len(self._files) - 1:
+                self._load_frame(self._idx + 1)
+            elif self._cb_loop.isChecked():
+                if self._cb_accum.isChecked():
+                    self._accum_pts.clear()
+                self._load_frame(0)
+            else:
+                self._on_play_toggle()   # 停止
 
-    def clear_accum(_vis):
-        if accumulate:
-            state["accumulated_points"].clear()
-            print("\n  累積クリア")
-        return False
+        # ── トランスポートスロット ─────────────────────────────────────────────
 
-    vis.register_key_callback(ord(" "), toggle_play)
-    vis.register_key_callback(262, next_frame)      # GLFW_KEY_RIGHT
-    vis.register_key_callback(263, prev_frame)      # GLFW_KEY_LEFT
-    vis.register_key_callback(ord("="), speed_up)
-    vis.register_key_callback(ord("-"), speed_down)
-    vis.register_key_callback(ord("L"), toggle_loop)
-    vis.register_key_callback(ord("F"), toggle_filter)
-    vis.register_key_callback(ord("R"), reset_view)
-    vis.register_key_callback(ord("C"), clear_accum)
+        def _on_play_toggle(self):
+            self._playing = not self._playing
+            if self._playing:
+                self._btn_play.setText("⏸")
+                self._timer.start(max(17, int(1000 / self._fps)))
+            else:
+                self._btn_play.setText("▶")
+                self._timer.stop()
 
-    # ── 初期表示: 最も大きい点群ファイル(=情報量が多い)を最初に使い視点を合わせる ──
-    sizes = [os.path.getsize(f) for f in files]
-    initial_idx = max(range(len(files)), key=lambda i: sizes[i])
-    print(f"\n  視点設定用に最大ファイル #{initial_idx+1} ({sizes[initial_idx]/1024:.1f} KB) で表示開始")
-    state["idx"] = initial_idx
-    _load(initial_idx)
-    if len(pcd_geom.points) == 0:
-        print("\n  ⚠ 表示できる有効点がありません。--inspect で内容を確認してください。")
-        vis.destroy_window()
-        return
-    vis.add_geometry(pcd_geom)
-    vis.reset_view_point(True)
-    # 表示後、先頭フレームに戻す (再生は先頭から)
-    state["idx"] = 0
-    _load(0)
-    vis.update_geometry(pcd_geom)
+        def _on_first(self):
+            was = self._playing
+            if was: self._on_play_toggle()
+            self._load_frame(0)
+            if was: self._on_play_toggle()
 
-    # ── メインループ ──
-    try:
-        while True:
-            if state["playing"]:
-                now = time.time()
-                if now - state["last_update"] >= 1.0 / state["fps"]:
-                    if state["idx"] < len(files) - 1:
-                        state["idx"] += 1
-                        _load(state["idx"])
-                        vis.update_geometry(pcd_geom)
-                    elif state["loop"]:
-                        # ループ: 先頭に戻る
-                        if accumulate:
-                            state["accumulated_points"].clear()
-                        state["idx"] = 0
-                        _load(0)
-                        vis.update_geometry(pcd_geom)
-                        print(f"\n  ↺ ループ再生（先頭に戻ります）")
-                    else:
-                        state["playing"] = False
-                        print("\n  最終フレームに到達しました  (L キーでループ再生ON)")
-                    state["last_update"] = now
+        def _on_prev(self):
+            was = self._playing
+            if was: self._on_play_toggle()
+            if self._cb_accum.isChecked() and self._accum_pts:
+                self._accum_pts.pop()
+            self._load_frame(self._idx - 1)
+            if was: self._on_play_toggle()
 
-            if not vis.poll_events():
-                break
-            vis.update_renderer()
-    finally:
-        vis.destroy_window()
-        print()
+        def _on_next(self):
+            was = self._playing
+            if was: self._on_play_toggle()
+            self._load_frame(self._idx + 1)
+            if was: self._on_play_toggle()
+
+        def _on_last(self):
+            was = self._playing
+            if was: self._on_play_toggle()
+            self._load_frame(len(self._files) - 1)
+            if was: self._on_play_toggle()
+
+        def _on_fps_changed(self, value: int):
+            self._fps = float(value)
+            self._lbl_fps.setText(str(value))
+            if self._playing:
+                self._timer.start(max(17, int(1000 / self._fps)))
+
+        def _on_filter_toggled(self, _):
+            self._load_frame(self._idx)
+
+        def _on_accum_toggled(self, checked: bool):
+            self._btn_clear.setEnabled(checked)
+            if not checked:
+                self._accum_pts.clear()
+            self._load_frame(self._idx)
+
+        def _on_clear_accum(self):
+            self._accum_pts.clear()
+            self._load_frame(self._idx)
+
+        def _on_reset_view(self):
+            self._elev = 20.0
+            self._azim = -60.0
+            self._draw_pts(
+                filter_valid(read_pcd(self._files[self._idx]))
+                if self._cb_filter.isChecked()
+                else read_pcd(self._files[self._idx]),
+                reset_view=True,
+            )
+
+        # ── キーボードショートカット ──────────────────────────────────────────
+
+        def keyPressEvent(self, event):
+            key = event.key()
+            from PyQt5.QtCore import Qt as _Qt
+            if   key == _Qt.Key_Space:  self._on_play_toggle()
+            elif key == _Qt.Key_Left:   self._on_prev()
+            elif key == _Qt.Key_Right:  self._on_next()
+            elif key == _Qt.Key_Home:   self._on_first()
+            elif key == _Qt.Key_End:    self._on_last()
+            elif key == _Qt.Key_L:      self._cb_loop.toggle()
+            elif key == _Qt.Key_F:      self._cb_filter.toggle()
+            elif key == _Qt.Key_C:      self._on_clear_accum()
+            elif key == _Qt.Key_R:      self._on_reset_view()
+            else: super().keyPressEvent(event)
+
+        def closeEvent(self, event):
+            self._timer.stop()
+            event.accept()
+
+    # ── アプリ起動 ────────────────────────────────────────────────────────────
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    win = PCDViewerWindow()
+    win.show()
+    sys.exit(app.exec_())
 
 
 # ── ファイル選択 ──────────────────────────────────────────────────────────────
 
-def pick_file(directory: str) -> str | None:
+def pick_file(directory: str) -> "str | None":
     """ディレクトリ内の PCD ファイル一覧を表示して選択させる"""
     pattern = os.path.join(directory, "**", "*.pcd")
     files = sorted(glob.glob(pattern, recursive=True))
@@ -578,29 +758,29 @@ def main() -> None:
     parser.add_argument(
         "path",
         nargs="?",
-        default=os.path.join(os.path.expanduser("~"), "lidar_output"),
+        default=r"C:/Users/ntlx4/OneDrive/デスクトップ/LiDAR/falcon k2",
         help=".pcd ファイルまたはセッションディレクトリのパス",
     )
     parser.add_argument(
         "--animate", "-a",
         action="store_true",
-        help="連番アニメーション再生モード (ディレクトリ指定必須、open3d必須)",
+        help="PyQt5 GUI シーケンスビューアーを起動 (ディレクトリ指定必須)",
     )
     parser.add_argument(
         "--fps",
         type=float,
         default=10.0,
-        help="アニメーション再生フレームレート [Hz] (default: 10)",
+        help="初期再生フレームレート [Hz] (default: 10)",
     )
     parser.add_argument(
         "--accumulate",
         action="store_true",
-        help="点群を累積表示する (差分PCDの全体像を見たいとき)",
+        help="点群を累積表示する (差分PCDの全体像を見るのに便利)",
     )
     parser.add_argument(
         "--loop", "-l",
         action="store_true",
-        help="最終フレームで先頭に戻りループ再生する (再生中に L キーでも切替可)",
+        help="最終フレームで先頭に戻りループ再生する",
     )
     parser.add_argument(
         "--inspect", "-i",
@@ -609,8 +789,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # PowerShell が末尾の "\" を次のクォートをエスケープする扱いにする落とし穴対策:
-    # "C:\path\dir\" と書くとパス末尾に " が混入するため除去する
+    # PowerShell の末尾 "\" エスケープ対策
     target = args.path.strip().rstrip('"').rstrip("'")
 
     if args.inspect:
@@ -624,18 +803,17 @@ def main() -> None:
         if not os.path.isdir(target):
             print(f"  ⚠ --animate にはディレクトリを指定してください: {target}")
             sys.exit(1)
-        animate_sequence(target, fps=args.fps, accumulate=args.accumulate, loop=args.loop)
+        run_sequence_viewer(target, fps=args.fps,
+                            accumulate=args.accumulate, loop=args.loop)
         return
 
     if os.path.isfile(target):
-        # ファイル直接指定
         if not target.endswith(".pcd"):
             print(f"  ⚠ {target} は .pcd ファイルではありません。")
             sys.exit(1)
         view(target)
 
     elif os.path.isdir(target):
-        # ディレクトリ → 一覧から選択
         while True:
             filepath = pick_file(target)
             if filepath is None:
