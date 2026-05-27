@@ -200,6 +200,18 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self._dsb_voxel, 0, 1)
 
+        self._cb_diff_filter = QCheckBox("差分フィルタ（変化した点のみ保存）")
+        self._cb_diff_filter.setChecked(True)
+        self._cb_diff_filter.setToolTip(
+            "チェックON（デフォルト）: 前フレームから変化した点だけを保存します。\n"
+            "  → ファイルサイズが小さく、差分ビューに適しています。\n\n"
+            "チェックOFF: 全フレームの全点を保存します。\n"
+            "  → ファイルサイズは大きくなりますが、各フレームの完全な点群を記録できます。\n"
+            "  → ボクセルサイズの設定は無効になります。"
+        )
+        self._cb_diff_filter.stateChanged.connect(self._on_diff_filter_changed)
+        layout.addWidget(self._cb_diff_filter, 1, 0, 1, 2)
+
         self._cb_save_raw = QCheckBox("生 UDP パケットを保存する (フォーマット解析用)")
         self._cb_save_raw.setChecked(False)
         self._cb_save_raw.setToolTip(
@@ -207,7 +219,7 @@ class MainWindow(QMainWindow):
             "セッションフォルダ内 packet_dump_xxx/ に保存します。\n"
             "パケットフォーマットの逆解析やトラブルシュートに使用します。"
         )
-        layout.addWidget(self._cb_save_raw, 1, 0, 1, 2)
+        layout.addWidget(self._cb_save_raw, 2, 0, 1, 2)
 
         return grp
 
@@ -349,14 +361,21 @@ class MainWindow(QMainWindow):
 
     # ── スロット ──────────────────────────────────────────────────────────────
 
+    @pyqtSlot(int)
+    def _on_diff_filter_changed(self, state: int) -> None:
+        """差分フィルタOFFのときはボクセルサイズ設定を無効化する"""
+        enabled = (state == Qt.Checked)
+        self._dsb_voxel.setEnabled(enabled)
+
     @pyqtSlot()
     def _on_start(self) -> None:
-        host      = self._le_host.text().strip() or DEFAULT_HOST
-        port      = self._sb_port.value()
-        duration  = self._sb_duration.value()
-        output    = self._le_output.text().strip() or DEFAULT_OUTPUT
-        voxel     = self._dsb_voxel.value()
-        save_raw  = self._cb_save_raw.isChecked()
+        host        = self._le_host.text().strip() or DEFAULT_HOST
+        port        = self._sb_port.value()
+        duration    = self._sb_duration.value()
+        output      = self._le_output.text().strip() or DEFAULT_OUTPUT
+        voxel       = self._dsb_voxel.value()
+        save_raw    = self._cb_save_raw.isChecked()
+        diff_filter = self._cb_diff_filter.isChecked()
 
         self._recorder.start(
             host=host,
@@ -365,6 +384,7 @@ class MainWindow(QMainWindow):
             output_dir=output,
             voxel_size=voxel,
             save_raw_packets=save_raw,
+            diff_filter=diff_filter,
         )
 
     @pyqtSlot()
@@ -394,6 +414,7 @@ class MainWindow(QMainWindow):
         self._le_output.setEnabled(is_idle)
         self._dsb_voxel.setEnabled(is_idle)
         self._cb_save_raw.setEnabled(is_idle)
+        self._cb_diff_filter.setEnabled(is_idle)
 
         if is_recording:
             self.statusBar().showMessage(

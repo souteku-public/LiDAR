@@ -74,6 +74,7 @@ class Recorder(QObject):
         self._start_time: float = 0.0
         self._frame_count: int = 0
         self._saved_count:  int = 0
+        self._diff_filter: bool = True
 
         # タイマースレッド
         self._timer_thread: Optional[threading.Thread] = None
@@ -89,6 +90,7 @@ class Recorder(QObject):
         output_dir: str,
         voxel_size: float = 0.05,
         save_raw_packets: bool = False,
+        diff_filter: bool = True,
     ) -> None:
         """録画を開始する"""
         if self._state != RecorderState.IDLE:
@@ -106,6 +108,7 @@ class Recorder(QObject):
         self._saved_count = 0
         self._stop_ev.clear()
 
+        self._diff_filter = diff_filter
         self._detector = ChangeDetector(voxel_size=voxel_size)
         self._writer   = PCDWriter(session_dir)
 
@@ -160,10 +163,14 @@ class Recorder(QObject):
             return
 
         self._frame_count += 1
-        changed, is_first = self._detector.detect(frame.points)
-
-        # シグナルは Qt が自動でキューイング (スレッドセーフ)
         self.sig_frame_received.emit(frame.frame_id, len(frame.points))
+
+        if self._diff_filter:
+            # 従来の差分フィルタ
+            changed, is_first = self._detector.detect(frame.points)
+        else:
+            # フィルタOFF: 全点を保存
+            changed = frame.points
 
         if changed.shape[0] > 0 and self._writer is not None:
             path = self._writer.write(frame.frame_id, frame.timestamp, changed)

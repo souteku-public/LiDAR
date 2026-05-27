@@ -322,6 +322,7 @@ def animate_sequence(
     directory: str,
     fps: float = 10.0,
     accumulate: bool = False,
+    loop: bool = False,
 ) -> None:
     """
     PCD ファイル群を連番アニメーションとして再生する (open3d 必須)。
@@ -333,6 +334,7 @@ def animate_sequence(
     accumulate : bool  True にすると点群を累積表示する
                        (差分PCDの全体像を見たいとき)。
                        False は各PCDを単独表示。
+    loop       : bool  True にすると最終フレームの後、先頭に戻り繰り返す。
 
     キー操作:
         SPACE  : 再生 / 一時停止
@@ -340,6 +342,8 @@ def animate_sequence(
         ←      : 前のフレーム (一時停止)
         =      : 再生速度 1.5 倍
         -      : 再生速度 1/1.5
+        L      : ループ再生 ON / OFF トグル
+        F      : フィルタ ON / OFF トグル (有効点のみ ↔ 全点表示)
         R      : 視点リセット
         C      : 累積表示クリア (accumulate モード時)
         Q / Esc: 終了
@@ -356,9 +360,10 @@ def animate_sequence(
         return
 
     mode = "累積表示" if accumulate else "単独表示"
-    print(f"\n  {len(files)} ファイルを {fps:.1f} FPS で再生 ({mode})")
+    loop_label = "ループON" if loop else "ループOFF"
+    print(f"\n  {len(files)} ファイルを {fps:.1f} FPS で再生 ({mode} / {loop_label})")
     print("  ─" * 30)
-    print("  操作: SPACE=再生/一時停止  ←/→=前後  +/-=速度  R=視点  C=累積クリア  Q=終了")
+    print("  操作: SPACE=再生停止  ←/→=前後  +/-=速度  L=ループ切替  F=フィルタ切替  R=視点  C=累積クリア  Q=終了")
     print("  ─" * 30)
 
     vis = o3d.visualization.VisualizerWithKeyCallback()
@@ -368,9 +373,13 @@ def animate_sequence(
     )
 
     state = {
-        "idx": 0, "playing": True, "fps": fps,
-        "last_update": time.time(),
-        "accumulated_points": [],   # for accumulate mode
+        "idx":                0,
+        "playing":            True,
+        "fps":                fps,
+        "last_update":        time.time(),
+        "accumulated_points": [],   # accumulate モード用
+        "loop":               loop,   # ループ再生フラグ
+        "filter_on":          True,   # True=有効点のみ / False=全点表示
     }
 
     pcd_geom = o3d.geometry.PointCloud()
@@ -390,7 +399,8 @@ def animate_sequence(
 
     def _load(i: int) -> None:
         try:
-            pts = filter_valid(read_pcd(files[i]))
+            raw = read_pcd(files[i])
+            pts = filter_valid(raw) if state["filter_on"] else raw
         except Exception as e:  # noqa: BLE001
             print(f"\n  読み込み失敗: {files[i]} ({e})")
             return
@@ -404,12 +414,16 @@ def animate_sequence(
         pcd_geom.points = o3d.utility.Vector3dVector(pts[:, :3].astype(np.float64))
         pcd_geom.colors = o3d.utility.Vector3dVector(_colorize(pts).astype(np.float64))
         fname = os.path.basename(files[i])
-        print(f"\r  [{i+1:5d}/{len(files):5d}] {fname:50s} ({len(pts):>8,} pts)",
+        loop_mark = "↺" if state["loop"] else " "
+        filt_mark = "F" if state["filter_on"] else "-"
+        print(f"\r  [{i+1:5d}/{len(files):5d}] {loop_mark}{filt_mark} {fname:48s} ({len(pts):>8,} pts)",
               end="", flush=True)
 
     # ── キーコールバック ──
     def toggle_play(_vis):
         state["playing"] = not state["playing"]
+        status = "▶ 再生" if state["playing"] else "⏸ 一時停止"
+        print(f"\n  {status}")
         return False
 
     def next_frame(_vis):
@@ -440,6 +454,21 @@ def animate_sequence(
         print(f"\n  速度: {state['fps']:.1f} FPS")
         return False
 
+    def toggle_loop(_vis):
+        state["loop"] = not state["loop"]
+        status = "↺ ループON" if state["loop"] else "→ ループOFF"
+        print(f"\n  {status}")
+        return False
+
+    def toggle_filter(_vis):
+        state["filter_on"] = not state["filter_on"]
+        status = "フィルタON（有効点のみ）" if state["filter_on"] else "フィルタOFF（全点表示）"
+        print(f"\n  {status}")
+        # 現在フレームを再描画
+        _load(state["idx"])
+        _vis.update_geometry(pcd_geom)
+        return False
+
     def reset_view(_vis):
         _vis.reset_view_point(True)
         return False
@@ -451,10 +480,12 @@ def animate_sequence(
         return False
 
     vis.register_key_callback(ord(" "), toggle_play)
-    vis.register_key_callback(262, next_frame)   # GLFW_KEY_RIGHT
-    vis.register_key_callback(263, prev_frame)   # GLFW_KEY_LEFT
+    vis.register_key_callback(262, next_frame)      # GLFW_KEY_RIGHT
+    vis.register_key_callback(263, prev_frame)      # GLFW_KEY_LEFT
     vis.register_key_callback(ord("="), speed_up)
     vis.register_key_callback(ord("-"), speed_down)
+    vis.register_key_callback(ord("L"), toggle_loop)
+    vis.register_key_callback(ord("F"), toggle_filter)
     vis.register_key_callback(ord("R"), reset_view)
     vis.register_key_callback(ord("C"), clear_accum)
 
@@ -485,9 +516,17 @@ def animate_sequence(
                         state["idx"] += 1
                         _load(state["idx"])
                         vis.update_geometry(pcd_geom)
+                    elif state["loop"]:
+                        # ループ: 先頭に戻る
+                        if accumulate:
+                            state["accumulated_points"].clear()
+                        state["idx"] = 0
+                        _load(0)
+                        vis.update_geometry(pcd_geom)
+                        print(f"\n  ↺ ループ再生（先頭に戻ります）")
                     else:
                         state["playing"] = False
-                        print("\n  最終フレームに到達しました")
+                        print("\n  最終フレームに到達しました  (L キーでループ再生ON)")
                     state["last_update"] = now
 
             if not vis.poll_events():
@@ -559,6 +598,11 @@ def main() -> None:
         help="点群を累積表示する (差分PCDの全体像を見たいとき)",
     )
     parser.add_argument(
+        "--loop", "-l",
+        action="store_true",
+        help="最終フレームで先頭に戻りループ再生する (再生中に L キーでも切替可)",
+    )
+    parser.add_argument(
         "--inspect", "-i",
         action="store_true",
         help="ディレクトリ内全PCDファイルの統計を表示する (データ診断用)",
@@ -580,7 +624,7 @@ def main() -> None:
         if not os.path.isdir(target):
             print(f"  ⚠ --animate にはディレクトリを指定してください: {target}")
             sys.exit(1)
-        animate_sequence(target, fps=args.fps, accumulate=args.accumulate)
+        animate_sequence(target, fps=args.fps, accumulate=args.accumulate, loop=args.loop)
         return
 
     if os.path.isfile(target):
